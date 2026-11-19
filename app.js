@@ -4,15 +4,15 @@
   const GAMES = {
     trollguard: {
       title: 'Trollguard',
-      file: './Trollguard.html',
+      file: './games/Trollguard.html',
     },
     'sap-fighter': {
       title: 'SAP Fighter 2',
-      file: './SAP_Fighter_HD.html',
+      file: './games/SAP_Fighter_HD.html',
     },
     nordrally: {
       title: 'Nordrally',
-      file: './Nordrally.html',
+      file: './games/Nordrally.html',
     },
   };
 
