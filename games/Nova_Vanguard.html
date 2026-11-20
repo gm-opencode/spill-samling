@@ -748,12 +748,57 @@ kbd.nv-key {
   .controls-strip { display: none; }
 }
 
+/* Damage / low-hull vignette */
+#fx-damage {
+  position: fixed; inset: 0; z-index: 6; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse 75% 70% at 50% 50%, transparent 52%, rgba(255, 30, 60, 0.42) 88%, rgba(160, 0, 20, 0.7) 100%);
+  mix-blend-mode: screen;
+}
+#fx-damage.is-low { animation: lowHullPulse 1.1s ease-in-out infinite; }
+@keyframes lowHullPulse { 0%, 100% { opacity: 0.18; } 50% { opacity: 0.55; } }
+
+/* Audio gate: visible in every mode until the AudioContext is truly running */
+#audio-gate {
+  position: fixed; left: 50%; top: 64px; transform: translateX(-50%); z-index: 40;
+  display: none; align-items: center; gap: 0.7em;
+  padding: 0.62em 1.15em; pointer-events: auto; cursor: pointer;
+  background: rgba(30, 20, 4, 0.92); border: 1px solid rgba(245, 166, 35, 0.85);
+  color: #ffd07a; font-family: var(--f-mono); font-size: clamp(11px, 0.8vw + 0.3vh, 14px);
+  letter-spacing: 0.1em; text-transform: uppercase;
+  box-shadow: 0 0 24px rgba(245, 166, 35, 0.35);
+  animation: pulseHint 1.6s ease-in-out infinite;
+}
+#audio-gate.is-visible { display: inline-flex; }
+#audio-gate .gate-icon {
+  width: 0.9em; height: 0.9em; border-radius: 50%; background: var(--amber);
+  box-shadow: 0 0 10px var(--amber);
+}
+.hud-icon-btn.is-locked { border-color: rgba(245, 166, 35, 0.85); color: #ffd07a; animation: pulseHint 1.6s ease-in-out infinite; }
+
+/* Settings modal */
+.settings-grid { display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.3rem; }
+.settings-row { display: grid; grid-template-columns: 9.5em 1fr 3.4em; align-items: center; gap: 0.9em; }
+.settings-row label, .settings-label {
+  font-family: var(--f-mono); font-size: 0.74em; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-2);
+}
+.settings-row output { font-family: var(--f-mono); font-size: 0.8em; color: var(--cyan); text-align: right; }
+.settings-row input[type="range"] { width: 100%; accent-color: #38d9ff; cursor: pointer; }
+.seg-group { display: flex; gap: 0.4em; flex-wrap: wrap; grid-column: 2 / span 2; }
+.seg-btn {
+  padding: 0.42em 0.85em; border: 1px solid var(--line-hi); background: rgba(10, 18, 30, 0.85);
+  font-family: var(--f-mono); font-size: 0.74em; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2);
+}
+.seg-btn.is-on { border-color: var(--cyan); color: #dff8ff; background: rgba(56, 217, 255, 0.2); }
+.settings-note { font-size: 0.78em; color: var(--ink-3); line-height: 1.45; margin-top: -0.3rem; }
+
 </style>
 </head>
 <body>
   <div id="viewport" aria-label="Nova Vanguard 3D Space Battlefield"></div>
   <div id="fx-vignette" aria-hidden="true"></div>
   <div id="fx-flash" aria-hidden="true"></div>
+  <div id="fx-damage" aria-hidden="true"></div>
+  <button type="button" id="audio-gate" aria-live="polite"><span class="gate-icon" aria-hidden="true"></span><span id="audio-gate-text">Sound is off: click, tap or press any key to enable audio</span></button>
   <div id="float-layer" aria-hidden="true"></div>
 
   <div id="ui">
@@ -765,6 +810,7 @@ kbd.nv-key {
           <div class="meta-chip" id="chip-best">BEST <strong>0</strong></div>
           <div class="meta-chip" id="chip-progress">CLEARED <strong>0/10</strong></div>
           <button type="button" class="hud-icon-btn is-on" id="btn-title-audio" title="Toggle Audio &amp; Hangar Synth (M)">AUDIO: ON</button>
+          <button type="button" class="hud-icon-btn" id="btn-title-settings" title="Audio &amp; graphics settings">SETTINGS</button>
           <span class="audio-unlock-hint" id="audio-unlock-hint">CLICK OR PRESS ANY KEY TO ENABLE SYNTH AUDIO</span>
         </div>
       </div>
@@ -974,8 +1020,50 @@ kbd.nv-key {
         <p class="modal-sub">Controls: A/D or Arrows to strafe, Space to fire, Shift for barrel-roll dash, Q for Special Weapon, F to toggle Auto-Fire.</p>
         <div class="pause-stack">
           <button type="button" class="nv-btn nv-btn-primary" id="btn-resume">Resume Mission</button>
+          <button type="button" class="nv-btn nv-btn-cyan" id="btn-pause-settings">Audio &amp; Graphics Settings</button>
           <button type="button" class="nv-btn" id="btn-restart-stage">Restart Current Sector</button>
           <button type="button" class="nv-btn" id="btn-pause-hangar">Return to Launch Hangar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== SETTINGS MODAL ==================== -->
+    <div id="modal-settings" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Settings">
+      <div class="modal-panel modal-panel-sm">
+        <div class="modal-kicker">SYSTEMS CONFIGURATION</div>
+        <h2 class="modal-title">Settings</h2>
+        <div class="settings-grid">
+          <div class="settings-row">
+            <label for="set-music">Music</label>
+            <input type="range" id="set-music" min="0" max="100" step="1" value="80" />
+            <output id="set-music-val">80</output>
+          </div>
+          <div class="settings-row">
+            <label for="set-sfx">Effects</label>
+            <input type="range" id="set-sfx" min="0" max="100" step="1" value="85" />
+            <output id="set-sfx-val">85</output>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Graphics</span>
+            <div class="seg-group" id="set-quality">
+              <button type="button" class="seg-btn" data-val="auto">Auto</button>
+              <button type="button" class="seg-btn" data-val="high">High (bloom)</button>
+              <button type="button" class="seg-btn" data-val="low">Low</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Screen shake</span>
+            <div class="seg-group" id="set-shake">
+              <button type="button" class="seg-btn" data-val="1">Full</button>
+              <button type="button" class="seg-btn" data-val="0.5">Reduced</button>
+              <button type="button" class="seg-btn" data-val="0">Off</button>
+            </div>
+          </div>
+          <p class="settings-note">M toggles all audio. Auto graphics starts on High and drops to Low if the frame rate stays low.</p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="nv-btn nv-btn-primary nv-btn-sm" id="btn-settings-close">Done</button>
+          <button type="button" class="nv-btn nv-btn-sm" id="btn-settings-test">Test sound</button>
         </div>
       </div>
     </div>
@@ -1463,313 +1551,475 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 })(window.NV = window.NV || {});
 
 
-/* ===== 02_audio.js — Procedural Web Audio Synthesizer, Spatial SFX & Multi-Track Sequencer ===== */
+/* ===== 02_audio.js — Procedural Web Audio Synthesizer, Spatial SFX & Adaptive Multi-Track Score ===== */
 (function (NV) {
   'use strict';
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const mtof = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const jit = (x, pct) => x * (1 + (Math.random() * 2 - 1) * pct);
 
-  // Classic Space Invaders 4-note descending sub-bass motif (G2, F2, E2, D2)
-  const INVADER_PULSE_HZ = [98.0, 87.31, 82.41, 73.42];
+  function mulberry32(seed) {
+    let a = seed | 0;
+    return function () {
+      a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
 
-  // Hangar / Title 64-step Synthwave Progression: Dm9 -> Bbmaj7 -> Gm7 -> A7sus4/A7
-  const HANGAR_BARS = [
-    {
-      bass: 38,
-      pad: [50, 53, 57, 64],
-      arp: [62, 65, 69, 76, 69, 65, 74, 69],
-    },
-    {
-      bass: 46,
-      pad: [46, 50, 53, 57],
-      arp: [58, 62, 65, 69, 65, 62, 72, 69],
-    },
-    {
-      bass: 43,
-      pad: [55, 58, 62, 65],
-      arp: [67, 70, 74, 77, 74, 70, 69, 65],
-    },
-    {
-      bass: 45,
-      pad: [45, 52, 55, 62],
-      padLate: [45, 52, 55, 61],
-      arp: [57, 62, 64, 69, 67, 64, 61, 64],
-    },
-  ];
+  const UA = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  const IS_IOS = /iPad|iPhone|iPod/.test(UA) || (/Macintosh/.test(UA) && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1);
 
-  // Cinema 32-step Score
-  const CINEMA_PULSE = [
-    38, 38, 38, 50, 38, 38, 48, 38,
-    46, 46, 46, 45, 43, 43, 45, 45,
-  ];
-  const CINEMA_PINGS = { 4: 81, 14: 77, 20: 86, 30: 76 };
+  // Events that WebKit and Chromium both accept as user activation. Context creation only ever happens inside these.
+  const GESTURE_EVENTS = ['click', 'pointerup', 'mouseup', 'touchend', 'keydown', 'keyup'];
+  const NON_ACTIVATING_KEYS = new Set(['Escape', 'Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn', 'OS', 'Unidentified']);
 
-  // Battle 64-step Driving Arcade Sci-Fi Score (Dm -> Bb -> Gm -> A)
-  const BATTLE_BARS = [
-    { bass: 38, arp: [62, 65, 69, 74] },
-    { bass: 46, arp: [58, 62, 65, 70] },
-    { bass: 43, arp: [55, 58, 62, 67] },
-    { bass: 45, arp: [57, 61, 64, 69] },
-  ];
-  const BATTLE_MELODY = {
-    0: [74, 2.5], 3: [69, 1.0], 4: [77, 2.5], 7: [76, 1.0], 8: [74, 1.8], 10: [72, 1.8], 12: [69, 3.2],
-    16: [70, 2.5], 19: [65, 1.0], 20: [74, 2.5], 23: [72, 1.0], 24: [70, 1.8], 26: [69, 1.8], 28: [65, 3.2],
-    32: [67, 1.8], 34: [70, 1.8], 36: [74, 2.5], 39: [77, 1.4], 40: [76, 1.8], 42: [74, 1.8], 44: [70, 3.2],
-    48: [69, 1.8], 50: [73, 1.8], 52: [76, 3.2], 56: [79, 1.8], 58: [77, 1.8], 60: [76, 1.8], 62: [73, 1.8],
+  // ==================== MUSIC THEORY TABLES ====================
+  const QUAL = {
+    maj: [0, 4, 7], min: [0, 3, 7], m7: [0, 3, 7, 10], maj7: [0, 4, 7, 11], dom7: [0, 4, 7, 10],
+    sus4: [0, 5, 7], sus2: [0, 2, 7], m9: [0, 3, 7, 10, 14], add9: [0, 4, 7, 14], pow: [0, 7, 12],
+  };
+  const MINOR = [0, 2, 3, 5, 7, 8, 10];
+  const MAJOR = [0, 2, 4, 5, 7, 9, 11];
+  const PHRYG = [0, 1, 3, 5, 7, 8, 10];
+
+  // One-bar rhythm templates for the melody generator: [step, lengthInSteps]
+  const RHY = {
+    sparse: [
+      [[0, 6], [8, 4], [12, 4]],
+      [[0, 4], [6, 2], [8, 8]],
+      [[0, 8], [10, 2], [12, 4]],
+      [[2, 2], [4, 4], [8, 6], [14, 2]],
+    ],
+    mid: [
+      [[0, 3], [3, 3], [6, 2], [8, 4], [12, 2], [14, 2]],
+      [[0, 2], [2, 2], [4, 4], [8, 2], [10, 2], [12, 4]],
+      [[0, 4], [4, 2], [6, 2], [8, 3], [11, 3], [14, 2]],
+      [[0, 2], [3, 1], [4, 2], [6, 2], [8, 6], [14, 2]],
+      [[0, 6], [6, 2], [8, 2], [10, 2], [12, 4]],
+    ],
+    busy: [
+      [[0, 2], [2, 1], [3, 1], [4, 2], [6, 2], [8, 2], [10, 2], [12, 1], [13, 1], [14, 2]],
+      [[0, 3], [3, 3], [6, 2], [8, 2], [10, 1], [11, 1], [12, 4]],
+      [[0, 1], [1, 1], [2, 2], [4, 2], [6, 2], [8, 3], [11, 3], [14, 2]],
+      [[0, 2], [2, 2], [4, 1], [5, 1], [6, 2], [8, 4], [12, 2], [14, 2]],
+    ],
+    cad: [
+      [[0, 4], [4, 4], [8, 8]],
+      [[0, 2], [2, 2], [4, 12]],
+      [[0, 6], [6, 2], [8, 8]],
+      [[0, 3], [3, 3], [6, 10]],
+    ],
   };
 
-  // Boss 64-step 145+ BPM Theme (C minor / Phrygian Dominant)
-  const BOSS_STABS = new Set([0, 6, 10, 16, 22, 26, 32, 38, 42, 48, 54, 58]);
-  const BOSS_KICKS = new Set([0, 2, 4, 8, 10, 12, 14]);
-  const BOSS_LEAD = {
-    0: [72, 2.0], 6: [75, 2.0], 10: [74, 2.0], 12: [73, 3.0],
-    16: [72, 2.0], 20: [75, 2.0], 24: [79, 2.0], 28: [77, 3.0],
-    32: [77, 2.0], 36: [79, 2.0], 40: [80, 2.0], 44: [79, 3.0],
-    48: [85, 1.4], 50: [84, 1.4], 52: [80, 1.4], 54: [79, 1.4], 56: [76, 2.0], 60: [73, 3.2],
+  // Track definitions. Chords are [semitone offset from key root, quality], one per bar (looped).
+  const TRACKS = {
+    hangar: {
+      bpm: 92, key: 38, scale: MINOR, lead: { lo: 69, hi: 86, dens: 'sparse' },
+      order: ['A', 'B', 'A', 'C'],
+      sections: {
+        A: { bars: 8, chords: [[0, 'm9'], [8, 'maj7'], [5, 'm7'], [7, 'sus4'], [0, 'm9'], [8, 'maj7'], [3, 'maj7'], [7, 'dom7']] },
+        B: { bars: 8, chords: [[3, 'maj7'], [10, 'add9'], [0, 'm7'], [8, 'maj7'], [3, 'maj7'], [10, 'maj'], [5, 'm7'], [7, 'sus4']], lead: true },
+        C: { bars: 8, chords: [[8, 'maj7'], [10, 'add9'], [0, 'm9'], [0, 'm9'], [5, 'm7'], [3, 'maj7'], [7, 'sus4'], [7, 'dom7']], lead: true },
+      },
+    },
+    cinema: {
+      bpm: 100, key: 38, scale: MINOR, lead: { lo: 67, hi: 84, dens: 'sparse' },
+      order: ['A', 'B'],
+      sections: {
+        A: { bars: 4, chords: [[0, 'min'], [8, 'maj'], [5, 'min'], [7, 'sus4']] },
+        B: { bars: 4, chords: [[0, 'min'], [1, 'maj'], [0, 'min'], [7, 'dom7']] },
+      },
+    },
+    battle: {
+      bpm: 128, key: 38, scale: MINOR, lead: { lo: 67, hi: 88, dens: 'mid' },
+      order: ['A', 'B', 'C', 'D'],
+      sections: {
+        A: { bars: 8, chords: [[0, 'min'], [8, 'maj'], [10, 'maj'], [7, 'min']], march: true },
+        B: { bars: 8, chords: [[5, 'min'], [0, 'min'], [8, 'maj'], [7, 'dom7'], [5, 'min'], [0, 'min'], [3, 'maj'], [7, 'dom7']], lead: true },
+        C: { bars: 8, chords: [[0, 'min'], [10, 'maj'], [8, 'maj'], [10, 'maj'], [0, 'min'], [10, 'maj'], [8, 'maj'], [7, 'sus4']], lead: true, drive: true },
+        D: { bars: 4, chords: [[8, 'maj7'], [10, 'add9'], [0, 'm9'], [7, 'sus4']], breakdown: true, lead: true },
+      },
+    },
+    boss: {
+      bpm: 150, key: 36, scale: PHRYG, lead: { lo: 67, hi: 87, dens: 'busy' },
+      order: ['A', 'B'],
+      sections: {
+        A: { bars: 8, chords: [[0, 'min'], [1, 'maj'], [0, 'min'], [1, 'maj'], [8, 'maj'], [7, 'dom7'], [8, 'maj'], [7, 'dom7']] },
+        B: { bars: 8, chords: [[5, 'min'], [1, 'maj'], [0, 'min'], [0, 'min'], [5, 'min'], [8, 'maj'], [7, 'dom7'], [7, 'dom7']], lead: true },
+      },
+    },
+    victory: {
+      bpm: 116, key: 38, scale: MAJOR, lead: { lo: 69, hi: 90, dens: 'mid' },
+      order: ['A', 'B'],
+      sections: {
+        A: { bars: 8, chords: [[0, 'maj'], [7, 'maj'], [9, 'min'], [5, 'maj'], [0, 'maj'], [7, 'maj'], [5, 'maj'], [7, 'sus4']], lead: true },
+        B: { bars: 8, chords: [[5, 'maj7'], [7, 'maj'], [9, 'min'], [9, 'm7'], [2, 'min'], [7, 'maj'], [0, 'add9'], [7, 'dom7']], lead: true },
+      },
+    },
+    gameover: {
+      bpm: 66, key: 45, scale: MINOR, lead: { lo: 64, hi: 81, dens: 'sparse' },
+      order: ['A'],
+      sections: {
+        A: { bars: 4, chords: [[0, 'm9'], [8, 'maj7'], [5, 'm7'], [7, 'sus4']], lead: true },
+      },
+    },
   };
 
-  // Victory 64-step D Major Heroic Score
-  const VICTORY_BARS = [
-    { bass: 38, pad: [50, 54, 57, 62], arp: [62, 66, 69, 74] },
-    { bass: 49, pad: [49, 52, 57, 64], arp: [64, 69, 73, 76] },
-    { bass: 47, pad: [47, 54, 57, 62], arp: [62, 66, 71, 74] },
-    { bass: 43, bassLate: 45, pad: [55, 59, 62, 66], padLate: [57, 61, 64, 67], arp: [67, 71, 74, 78] },
-  ];
-  const VICTORY_MELODY = {
-    0: [74, 3.0], 4: [78, 2.0], 6: [81, 2.0], 8: [86, 3.6], 12: [85, 3.0],
-    16: [81, 3.0], 20: [76, 2.0], 22: [81, 2.0], 24: [85, 3.6], 28: [81, 3.0],
-    32: [78, 3.0], 36: [83, 2.0], 38: [81, 2.0], 40: [78, 3.6], 44: [74, 3.0],
-    48: [79, 3.0], 52: [81, 2.0], 54: [83, 2.0], 56: [85, 3.2], 60: [88, 3.6],
-  };
+  // Per-sector transposition so every sector's battle theme sits in its own key.
+  const SECTOR_TRANSPOSE = [0, 2, -2, 3, 0, 5, -3, 1, -1, 0];
+
+  // Overall mix calibration (linear gains). Tuned so battle sits around -16 dBFS RMS after the master chain.
+  const MIX = { music: 0.62, sfx: 0.72, makeup: 1.32, out: 0.94 };
+
+  function buildSilentWavUri(secs = 0.5, sr = 8000) {
+    const n = Math.floor(secs * sr);
+    const buf = new ArrayBuffer(44 + n * 2);
+    const v = new DataView(buf);
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    w(36, 'data'); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, i % 2 ? 1 : -1, true); // +-1 LSB: inaudible but "real" audio
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return 'data:audio/wav;base64,' + btoa(bin);
+  }
 
   const Audio = {
     ctx: null,
-    compressor: null,
-    master: null,
-    sfxGain: null,
-    musicGain: null,
-    reverbNode: null,
-    reverbSend: null,
-    reverbReturn: null,
-    noiseBuf: null,
-    silentBuf: null,
+    master: null,      // final output gain (mute lives here), after the limiter
+    limiter: null,
+    glue: null,
+    mix: null,
+    musicGain: null,   // user music volume
+    musicDuck: null,   // momentary ducking under big SFX
+    musicFilter: null, // pause muffle
+    drumBus: null, bassBus: null, padBus: null, leadBus: null,
+    sfxGain: null,     // user SFX volume
+    reverbIn: null, delayIn: null,
+    noiseBuf: null, silentBuf: null,
+    _distCurve: null,
 
     muted: false,
+    musicVol: 0.8,
+    sfxVol: 0.85,
+    paused: false,
     _unlocked: false,
     _listenersBound: false,
     _tickerId: null,
-    _activePads: [],
+    _longVoices: [],
     _lastSfxAt: {},
+    _sfxEnds: [],
+    _recentBooms: 0,
+    _recentBoomAt: 0,
+    _needsRecreate: false,
+    _recreateCount: 0,
+    _autoSuspended: false,
+    _htmlAudio: null,
 
-    musicMode: 'hangar', // 'idle' | 'hangar' | 'cinema' | 'battle' | 'boss' | 'victory'
+    musicMode: 'hangar',
     intensity: 0,
+    _smoothInt: 0,
+    sector: 1,
+    bossPhase: 1,
     nextNoteTime: 0,
-    seqStep: 0,
-    marchStep: 0,
-    marchTimer: 0,
-    bossStep: 0,
-    bossTimer: 0,
+    song: null,
 
-    ufoOsc: null,
-    ufoGain: null,
-    ufoLfo: null,
-    ufoPanner: null,
+    ufoOsc: null, ufoGain: null, ufoLfo: null, ufoPanner: null,
 
+    // init() never creates the AudioContext. Creation happens only inside a user gesture (see unlock()).
     init() {
       this._bindUnlockListeners();
-      if (this.ctx) {
-        if (this.ctx.state !== 'running') {
-          try {
-            const p = this.ctx.resume();
-            if (p && typeof p.catch === 'function') p.catch(() => {});
-          } catch (_) {}
-        }
-        this._startMusicTicker();
-        return this.ctx;
-      }
-
-      const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
-      if (!AC) return null;
-
-      try {
-        this.ctx = new AC({ latencyHint: 'interactive' });
-      } catch (_) {
-        try {
-          this.ctx = new AC();
-        } catch (_e2) {
-          return null;
-        }
-      }
-
-      // Master compressor prevents clipping during intense boss explosions + synth stacks
-      if (typeof this.ctx.createDynamicsCompressor === 'function') {
-        this.compressor = this.ctx.createDynamicsCompressor();
-        this.compressor.threshold.value = -14;
-        this.compressor.knee.value = 12;
-        this.compressor.ratio.value = 4.5;
-        this.compressor.attack.value = 0.003;
-        this.compressor.release.value = 0.16;
-      } else {
-        this.compressor = this.ctx.createGain();
-        this.compressor.gain.value = 1;
-      }
-
-      this.master = this.ctx.createGain();
-      this.master.gain.value = this.muted ? 0 : 0.78;
-
-      this.compressor.connect(this.master);
-      this.master.connect(this.ctx.destination);
-
-      this.sfxGain = this.ctx.createGain();
-      this.sfxGain.gain.value = 0.8;
-      this.sfxGain.connect(this.compressor);
-
-      this.musicGain = this.ctx.createGain();
-      this.musicGain.gain.value = 0.44;
-      this.musicGain.connect(this.compressor);
-
-      // Synthetic stereo impulse-response ConvolverNode reverb bus
-      this.reverbSend = this.ctx.createGain();
-      this.reverbSend.gain.value = 0.45;
-      this.reverbReturn = this.ctx.createGain();
-      this.reverbReturn.gain.value = 0.28;
-
-      if (typeof this.ctx.createConvolver === 'function') {
-        this.reverbNode = this.ctx.createConvolver();
-        this.reverbNode.buffer = this._buildImpulseResponse(1.65, 2.7);
-        this.reverbSend.connect(this.reverbNode);
-        this.reverbNode.connect(this.reverbReturn);
-        this.reverbReturn.connect(this.compressor);
-      } else {
-        this.reverbSend.connect(this.reverbReturn);
-        this.reverbReturn.connect(this.compressor);
-      }
-
-      // Subtle global SFX ambience into reverb bus
-      const sfxVerbTap = this.ctx.createGain();
-      sfxVerbTap.gain.value = 0.16;
-      this.sfxGain.connect(sfxVerbTap);
-      sfxVerbTap.connect(this.reverbSend);
-
-      // Shared white-noise buffer for explosions, thrusters, drums & radio squelch
-      const sr = this.ctx.sampleRate || 44100;
-      const len = Math.floor(sr * 1.5);
-      this.noiseBuf = this.ctx.createBuffer(1, len, sr);
-      const data = this.noiseBuf.getChannelData(0);
-      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
-
-      // 1-sample silent buffer for instant Chromium / iOS / iframe gesture unlock
-      this.silentBuf = this.ctx.createBuffer(1, 1, sr);
-
-      try {
-        this.ctx.onstatechange = () => this._handleStateChange();
-      } catch (_) {}
-
-      this._startMusicTicker();
-      this._handleStateChange();
+      if (this.ctx) this._startMusicTicker();
       return this.ctx;
     },
 
-    _buildImpulseResponse(duration = 1.65, decay = 2.7) {
+    _create() {
+      const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
+      if (!AC) return null;
+      let ctx = null;
+      try { ctx = new AC({ latencyHint: 'interactive' }); } catch (_) {
+        try { ctx = new AC(); } catch (_e) { return null; }
+      }
+      this.ctx = ctx;
+      this._needsRecreate = false;
+      this._buildGraph();
+      try { ctx.onstatechange = () => this._handleStateChange(); } catch (_) {}
+      this._resetSong();
+      this._startMusicTicker();
+      return ctx;
+    },
+
+    _buildGraph() {
+      const ctx = this.ctx;
+      const sr = ctx.sampleRate || 44100;
+
+      // Master chain: mix -> glue compressor -> makeup -> brickwall-ish limiter -> master (mute) -> out
+      this.mix = ctx.createGain();
+      this.mix.gain.value = 1;
+      const mkComp = (th, knee, ratio, att, rel) => {
+        if (typeof ctx.createDynamicsCompressor !== 'function') { const g = ctx.createGain(); return g; }
+        const c = ctx.createDynamicsCompressor();
+        c.threshold.value = th; c.knee.value = knee; c.ratio.value = ratio; c.attack.value = att; c.release.value = rel;
+        return c;
+      };
+      this.glue = mkComp(-20, 10, 2.6, 0.012, 0.22);
+      const makeup = ctx.createGain();
+      makeup.gain.value = MIX.makeup;
+      this.limiter = mkComp(-3, 0, 20, 0.0015, 0.1);
+      this.master = ctx.createGain();
+      this.master.gain.value = this.muted ? 0 : MIX.out;
+      this.mix.connect(this.glue);
+      this.glue.connect(makeup);
+      makeup.connect(this.limiter);
+      this.limiter.connect(this.master);
+      this.master.connect(ctx.destination);
+
+      // Music: buses -> musicFilter (pause muffle) -> musicDuck -> musicGain (user vol) -> mix
+      this.musicGain = ctx.createGain();
+      this.musicDuck = ctx.createGain();
+      this.musicFilter = ctx.createBiquadFilter();
+      this.musicFilter.type = 'lowpass';
+      this.musicFilter.frequency.value = 20000;
+      this.musicFilter.Q.value = 0.5;
+      this.musicFilter.connect(this.musicDuck);
+      this.musicDuck.connect(this.musicGain);
+      this.musicGain.connect(this.mix);
+      this.drumBus = ctx.createGain(); this.drumBus.gain.value = 1.0;
+      this.bassBus = ctx.createGain(); this.bassBus.gain.value = 1.0;
+      this.padBus = ctx.createGain(); this.padBus.gain.value = 1.0;
+      this.leadBus = ctx.createGain(); this.leadBus.gain.value = 1.0;
+      [this.drumBus, this.bassBus, this.padBus, this.leadBus].forEach((b) => b.connect(this.musicFilter));
+
+      // SFX bus
+      this.sfxGain = ctx.createGain();
+      this.sfxGain.connect(this.mix);
+      this._applyVolumes(true);
+
+      // Shared reverb (synthetic stereo IR)
+      this.reverbIn = ctx.createGain();
+      this.reverbIn.gain.value = 1;
+      const verbOut = ctx.createGain();
+      verbOut.gain.value = 0.42;
+      if (typeof ctx.createConvolver === 'function') {
+        const conv = ctx.createConvolver();
+        conv.buffer = this._buildImpulseResponse(2.1, 2.6);
+        this.reverbIn.connect(conv);
+        conv.connect(verbOut);
+      } else {
+        this.reverbIn.connect(verbOut);
+      }
+      verbOut.connect(this.mix);
+
+      // Stereo ping-pong delay for arps/leads (music only, follows the muffle filter)
+      this.delayIn = ctx.createGain();
+      const dl = ctx.createDelay(1.5);
+      const dr = ctx.createDelay(1.5);
+      const fb = ctx.createGain();
+      const tone = ctx.createBiquadFilter();
+      tone.type = 'lowpass'; tone.frequency.value = 2600;
+      fb.gain.value = 0.34;
+      const merger = typeof ctx.createChannelMerger === 'function' ? ctx.createChannelMerger(2) : null;
+      this.delayIn.connect(tone);
+      tone.connect(dl);
+      dl.connect(dr);
+      dr.connect(fb);
+      fb.connect(dl);
+      const dOut = ctx.createGain();
+      dOut.gain.value = 0.5;
+      if (merger) {
+        dl.connect(merger, 0, 0);
+        dr.connect(merger, 0, 1);
+        merger.connect(dOut);
+      } else {
+        dl.connect(dOut); dr.connect(dOut);
+      }
+      dOut.connect(this.musicFilter);
+      this._delayL = dl; this._delayR = dr;
+
+      // Noise + silent buffers
+      const len = Math.floor(sr * 2);
+      this.noiseBuf = ctx.createBuffer(1, len, sr);
+      const d = this.noiseBuf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      this.silentBuf = ctx.createBuffer(1, 1, sr);
+
+      // Soft-clip curve for gritty hits
+      const n = 1024;
+      this._distCurve = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const x = (i / (n - 1)) * 2 - 1;
+        this._distCurve[i] = Math.tanh(x * 3.2) / Math.tanh(3.2);
+      }
+      this._canPan = typeof ctx.createStereoPanner === 'function';
+    },
+
+    _buildImpulseResponse(duration, decay) {
       const sr = this.ctx.sampleRate || 44100;
       const len = Math.max(1, Math.floor(sr * duration));
       const buf = this.ctx.createBuffer(2, len, sr);
-      const preDelay = Math.floor(sr * 0.014);
+      const pre = Math.floor(sr * 0.018);
       for (let ch = 0; ch < 2; ch++) {
-        const channel = buf.getChannelData(ch);
+        const c = buf.getChannelData(ch);
         let lp = 0;
         for (let i = 0; i < len; i++) {
-          if (i < preDelay) {
-            channel[i] = 0;
-            continue;
-          }
-          const t = (i - preDelay) / Math.max(1, len - preDelay);
-          const env = Math.pow(1 - t, decay) * Math.min(1, (i - preDelay) / (sr * 0.01));
-          const white = Math.random() * 2 - 1;
-          lp = lp * 0.64 + white * 0.36;
-          channel[i] = lp * env;
+          if (i < pre) { c[i] = 0; continue; }
+          const t = (i - pre) / Math.max(1, len - pre);
+          const env = Math.pow(1 - t, decay) * Math.min(1, (i - pre) / (sr * 0.008));
+          lp = lp * 0.55 + (Math.random() * 2 - 1) * 0.45;
+          c[i] = lp * env;
         }
       }
       return buf;
     },
 
+    // ==================== UNLOCK / LIFECYCLE ====================
     _bindUnlockListeners() {
       if (this._listenersBound || typeof window === 'undefined') return;
       this._listenersBound = true;
-      const onGesture = () => this.unlock();
-      const events = ['pointerdown', 'mousedown', 'click', 'keydown', 'touchstart', 'touchend'];
-      events.forEach((ev) => {
+      const onGesture = (e) => {
+        if (e && e.type && e.type.startsWith('key') && NON_ACTIVATING_KEYS.has(e.key)) return;
+        this.unlock();
+      };
+      GESTURE_EVENTS.forEach((ev) => {
         window.addEventListener(ev, onGesture, { capture: true, passive: true });
-        if (typeof document !== 'undefined') {
-          document.addEventListener(ev, onGesture, { capture: true, passive: true });
-        }
       });
       if (typeof document !== 'undefined') {
         document.addEventListener('visibilitychange', () => {
-          if (!document.hidden && this.ctx && this._unlocked && this.ctx.state !== 'running') {
-            this.unlock();
+          if (!this.ctx) return;
+          if (document.hidden) {
+            if (this.ctx.state === 'running') {
+              this._autoSuspended = true;
+              try { const p = this.ctx.suspend(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+            }
+          } else {
+            this._tryResume();
           }
         });
       }
-      window.addEventListener('focus', () => {
-        if (this.ctx && this._unlocked && this.ctx.state !== 'running') {
-          this.unlock();
-        }
-      });
+      window.addEventListener('focus', () => this._tryResume());
+      window.addEventListener('pageshow', () => this._tryResume());
     },
 
-    unlock() {
-      if (!this.ctx) this.init();
-      if (!this.ctx) return false;
+    // Resume without a gesture (only valid after an earlier successful unlock, e.g. returning to the tab).
+    _tryResume() {
+      const ctx = this.ctx;
+      if (!ctx || ctx.state === 'running' || ctx.state === 'closed' || !this._unlocked) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      this._autoSuspended = false;
+      try {
+        const p = ctx.resume();
+        if (p && p.then) p.then(() => this._handleStateChange(), () => {});
+      } catch (_) {}
+    },
 
-      if (this.ctx.state !== 'running') {
-        // Silent 1-sample buffer forces WebKit / Chromium iframe audio pipeline awake
-        if (this.silentBuf) {
-          try {
-            const src = this.ctx.createBufferSource();
-            src.buffer = this.silentBuf;
-            src.connect(this.ctx.destination);
-            src.start(0);
-            src.stop(0.001);
-          } catch (_) {}
+    _iosSession() {
+      try {
+        if (typeof navigator !== 'undefined' && navigator.audioSession && navigator.audioSession.type !== 'playback') {
+          navigator.audioSession.type = 'playback'; // route Web Audio as media: ignores the iOS ring/silent switch
         }
-        try {
-          const p = this.ctx.resume();
-          if (p && typeof p.then === 'function') {
-            p.then(() => this._handleStateChange()).catch(() => {});
-          }
-        } catch (_) {}
-      } else {
-        this._handleStateChange();
+      } catch (_) {}
+      if (!IS_IOS || this._htmlAudio || (typeof navigator !== 'undefined' && navigator.audioSession)) return;
+      // Older iOS: a looping near-silent media element started inside the gesture switches the audio session category.
+      try {
+        const el = document.createElement('audio');
+        el.setAttribute('playsinline', '');
+        el.setAttribute('x-webkit-airplay', 'deny');
+        el.preload = 'auto';
+        el.loop = true;
+        el.src = buildSilentWavUri();
+        const p = el.play();
+        if (p && p.catch) p.catch(() => {});
+        this._htmlAudio = el;
+      } catch (_) {}
+    },
+
+    // Must be called synchronously from a user-gesture handler.
+    unlock() {
+      // A context that failed to reach 'running' after a previous gesture is discarded and rebuilt inside this gesture.
+      if (this.ctx && this.ctx.state !== 'running' && (this._needsRecreate || this.ctx.state === 'closed') && this._recreateCount < 6) {
+        this._recreate();
       }
+      if (!this.ctx) this._create();
+      const ctx = this.ctx;
+      if (!ctx) return false;
+      this._iosSession();
+      if (this._htmlAudio && this._htmlAudio.paused) {
+        try { const p = this._htmlAudio.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+      }
+
+      if (ctx.state !== 'running') {
+        // All synchronous inside the gesture: silent buffer kick + resume().
+        try {
+          const src = ctx.createBufferSource();
+          src.buffer = this.silentBuf;
+          src.connect(ctx.destination);
+          src.start(0);
+        } catch (_) {}
+        try {
+          const p = ctx.resume();
+          if (p && typeof p.then === 'function') {
+            p.then(() => this._handleStateChange(), () => { this._needsRecreate = true; this._handleStateChange(); });
+          }
+        } catch (_) { this._needsRecreate = true; }
+        if (!this._checkTimer) {
+          this._checkTimer = setTimeout(() => {
+            this._checkTimer = null;
+            if (this.ctx === ctx && ctx.state !== 'running' && ctx.state !== 'closed' && !(typeof document !== 'undefined' && document.hidden)) {
+              this._needsRecreate = true;
+            }
+            this._handleStateChange();
+          }, 450);
+        }
+      }
+      this._handleStateChange();
       return this.isUnlocked();
+    },
+
+    _recreate() {
+      const old = this.ctx;
+      this._recreateCount++;
+      this.ufoOsc = null; this.ufoLfo = null; this.ufoGain = null; this.ufoPanner = null;
+      this._longVoices = [];
+      this._sfxEnds = [];
+      this.ctx = null;
+      if (old) {
+        try { old.onstatechange = null; } catch (_) {}
+        try { const p = old.close(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+      }
+      this._create();
     },
 
     isUnlocked() {
       return !!(this.ctx && this.ctx.state === 'running');
     },
 
+    // 'running' | 'locked' (needs a click/key) | 'unsupported'
+    getStatus() {
+      const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
+      if (!AC) return 'unsupported';
+      return this.isUnlocked() ? 'running' : 'locked';
+    },
+
     _handleStateChange() {
-      if (!this.ctx) return;
-      const running = this.ctx.state === 'running';
+      const running = this.isUnlocked();
       if (running) {
+        this._needsRecreate = false;
         const now = this._now();
-        if (!this._unlocked || this.nextNoteTime < now - 0.1) {
-          this.nextNoteTime = now + 0.015;
-        }
+        if (!this._unlocked || this.nextNoteTime < now - 0.1) this.nextNoteTime = now + 0.03;
         this._unlocked = true;
         this._scheduleMusic();
       }
       if (typeof window !== 'undefined' && typeof window.CustomEvent === 'function') {
         try {
           window.dispatchEvent(new window.CustomEvent('nv-audio-state', {
-            detail: {
-              unlocked: running,
-              muted: this.muted,
-              mode: this.musicMode,
-              state: this.ctx.state,
-            },
+            detail: { unlocked: running, muted: this.muted, mode: this.musicMode, state: this.ctx ? this.ctx.state : 'none' },
           }));
         } catch (_) {}
       }
@@ -1778,24 +2028,18 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     _startMusicTicker() {
       if (this._tickerId || typeof setInterval === 'undefined') return;
       this._tickerId = setInterval(() => {
-        if (!this.ctx || this.muted) return;
-        if (this.ctx.state !== 'running') return;
+        if (!this.ctx || this.muted || this.ctx.state !== 'running') return;
         this._scheduleMusic();
-      }, 28);
+      }, 25);
     },
 
     _now() {
       return this.ctx ? Math.max(this.ctx.currentTime || 0, 0) : 0;
     },
 
-    // Never drops SFX during first-click suspended->running transition
+    // Safe no-op until a gesture has created and started the context. Never creates a context itself.
     _ensureSfxReady() {
-      if (!this.ctx) this.init();
-      if (!this.ctx || this.muted) return false;
-      if (this.ctx.state !== 'running') {
-        this.unlock();
-      }
-      return true;
+      return !!(this.ctx && !this.muted && this.ctx.state === 'running' && this.sfxGain);
     },
 
     _rateOk(key, minGapSec) {
@@ -1806,22 +2050,53 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       return true;
     },
 
+    // Voice budget: drop low-priority SFX when too many are already sounding.
+    _budget(dur, priority = 1) {
+      const now = this._now();
+      if (this._sfxEnds.length > 24) this._sfxEnds = this._sfxEnds.filter((e) => e > now);
+      const active = this._sfxEnds.length;
+      if (priority <= 0 && active > 18) return false;
+      if (priority === 1 && active > 30) return false;
+      if (active > 44) return false;
+      this._sfxEnds.push(now + dur);
+      return true;
+    },
+
+    // ==================== VOLUME / MUTE / PAUSE ====================
+    setVolumes(music, sfx) {
+      if (music !== undefined && music !== null) this.musicVol = clamp(Number(music) || 0, 0, 1);
+      if (sfx !== undefined && sfx !== null) this.sfxVol = clamp(Number(sfx) || 0, 0, 1);
+      this._applyVolumes(false);
+    },
+
+    _applyVolumes(immediate) {
+      if (!this.ctx || !this.musicGain) return;
+      const curve = (v) => v * v * 1.0 + v * 0.0; // perceptual-ish (square law)
+      const mg = MIX.music * curve(this.musicVol) * 1.6;
+      const sg = MIX.sfx * curve(this.sfxVol) * 1.4;
+      const now = this._now();
+      if (immediate) {
+        this.musicGain.gain.value = mg;
+        this.sfxGain.gain.value = sg;
+      } else {
+        this.musicGain.gain.setTargetAtTime(mg, now, 0.03);
+        this.sfxGain.gain.setTargetAtTime(sg, now, 0.03);
+      }
+    },
+
     setMuted(m) {
       this.muted = !!m;
       if (this.master && this.ctx) {
         const now = this._now();
         this.master.gain.cancelScheduledValues(now);
-        this.master.gain.setTargetAtTime(this.muted ? 0 : 0.78, now, 0.025);
+        this.master.gain.setTargetAtTime(this.muted ? 0 : MIX.out, now, 0.025);
       }
       if (this.muted) {
         this.stopUfoLoop();
-        this._fadeActivePads();
-      } else {
-        this.unlock();
-        if (this.ctx && this.ctx.state === 'running') {
-          this.nextNoteTime = this._now() + 0.02;
-          this._scheduleMusic();
-        }
+        this._fadeLongVoices(0.1);
+      } else if (this.ctx && this.ctx.state === 'running') {
+        this.nextNoteTime = this._now() + 0.03;
+        this._scheduleMusic();
       }
       this._handleStateChange();
     },
@@ -1831,343 +2106,522 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       return this.muted;
     },
 
+    setPaused(p) {
+      this.paused = !!p;
+      if (!this.ctx || !this.musicFilter) return;
+      const now = this._now();
+      this.musicFilter.frequency.cancelScheduledValues(now);
+      this.musicFilter.frequency.setTargetAtTime(this.paused ? 520 : 20000, now, this.paused ? 0.08 : 0.15);
+      this.musicDuck.gain.cancelScheduledValues(now);
+      this.musicDuck.gain.setTargetAtTime(this.paused ? 0.6 : 1, now, 0.1);
+      if (this.paused) this.stopUfoLoop();
+    },
+
+    setMusicParams(p) {
+      if (!p) return;
+      if (p.sector !== undefined) this.sector = clamp(p.sector | 0, 1, 10);
+      if (p.bossPhase !== undefined) this.bossPhase = clamp(p.bossPhase | 0, 1, 3);
+      if (p.intensity !== undefined) this.intensity = clamp(Number(p.intensity) || 0, 0, 1);
+    },
+
     setMusicMode(mode) {
       let resolved = mode || 'hangar';
-      if (resolved === 'idle' && NV.Engine) {
-        if (NV.Engine.mode === 'title' || NV.Engine.mode === 'upgrade') {
-          resolved = 'hangar';
-        } else if (NV.Engine.mode === 'victory') {
-          resolved = 'victory';
-        }
+      if (resolved === 'idle') {
+        // legacy: 'idle' used to mean pause / silence
+        resolved = (NV.Engine && NV.Engine.mode === 'gameover') ? 'gameover' : this.musicMode;
       }
+      if (!TRACKS[resolved]) resolved = 'hangar';
+      if (this.paused && resolved !== this.musicMode) this.setPaused(false);
       if (this.musicMode === resolved) return;
       this.musicMode = resolved;
-      this.seqStep = 0;
-      this.marchStep = 0;
-      this.bossStep = 0;
-      this._fadeActivePads();
+      this._resetSong();
+      this._fadeLongVoices(0.18);
       if (resolved !== 'battle') this.stopUfoLoop();
-      if (this.ctx && this.ctx.state === 'running' && resolved !== 'idle' && !this.muted) {
-        this.nextNoteTime = this._now() + 0.02;
+      if (this.ctx && this.ctx.state === 'running' && !this.muted) {
+        this.nextNoteTime = this._now() + 0.05;
         this._scheduleMusic();
       }
     },
 
-    _fadeActivePads() {
-      if (!this.ctx || this._activePads.length === 0) return;
+    _fadeLongVoices(fade = 0.12) {
+      if (!this.ctx || this._longVoices.length === 0) { this._longVoices = []; return; }
       const now = this._now();
-      for (const pad of this._activePads) {
+      for (const v of this._longVoices) {
+        if (v.end <= now) continue;
         try {
-          pad.gain.gain.cancelScheduledValues(now);
-          pad.gain.gain.setValueAtTime(Math.max(0.0001, pad.gain.gain.value || 0.02), now);
-          pad.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
-          pad.oscs.forEach((o) => {
-            try { o.stop(now + 0.11); } catch (_) {}
-          });
+          v.gain.gain.cancelScheduledValues(now);
+          v.gain.gain.setTargetAtTime(0.0001, now, fade / 3);
+          v.srcs.forEach((o) => { try { o.stop(now + fade + 0.05); } catch (_) {} });
         } catch (_) {}
       }
-      this._activePads = [];
+      this._longVoices = [];
     },
 
-    _connectOutput(node, dest, pan = 0, reverbAmt = 0) {
-      const target = dest || this.sfxGain;
-      let out = node;
-      if (pan && Math.abs(pan) > 0.01 && typeof this.ctx.createStereoPanner === 'function') {
-        const panner = this.ctx.createStereoPanner();
-        panner.pan.setValueAtTime(clamp(pan, -0.85, 0.85), this._now());
-        out.connect(panner);
-        out = panner;
-      }
-      out.connect(target);
-      if (reverbAmt > 0 && this.reverbSend) {
-        const send = this.ctx.createGain();
-        send.gain.value = reverbAmt;
-        out.connect(send);
-        send.connect(this.reverbSend);
+    _trackLong(srcs, gain, end) {
+      this._longVoices.push({ srcs, gain, end });
+      if (this._longVoices.length > 24) {
+        const now = this._now();
+        this._longVoices = this._longVoices.filter((v) => v.end > now);
       }
     },
 
-    _tone(type, f0, f1, dur, vol, dest, delay = 0, pan = 0, reverbAmt = 0) {
-      if (!this.ctx || this.muted) return;
-      const d = Math.max(0.015, dur);
-      const t = this._now() + Math.max(0, delay);
-      const osc = this.ctx.createOscillator();
-      const g = this.ctx.createGain();
-      osc.type = type;
-      osc.frequency.setValueAtTime(Math.max(20, f0), t);
-      if (f1 !== f0) {
-        osc.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + d);
+    // ==================== LOW-LEVEL VOICE HELPERS ====================
+    _route(node, bus, pan, rev, dly) {
+      const ctx = this.ctx;
+      let o = node;
+      if (pan && Math.abs(pan) > 0.02 && this._canPan) {
+        const p = ctx.createStereoPanner();
+        p.pan.value = clamp(pan, -0.95, 0.95);
+        o.connect(p);
+        o = p;
       }
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(Math.max(0.0002, vol), t + Math.min(0.008, d * 0.25));
-      g.gain.exponentialRampToValueAtTime(0.0001, t + d);
-      osc.connect(g);
-      this._connectOutput(g, dest || this.sfxGain, pan, reverbAmt);
-      osc.start(t);
-      osc.stop(t + d + 0.025);
+      o.connect(bus || this.sfxGain);
+      if (rev > 0 && this.reverbIn) {
+        const s = ctx.createGain(); s.gain.value = rev; o.connect(s); s.connect(this.reverbIn);
+      }
+      if (dly > 0 && this.delayIn) {
+        const s = ctx.createGain(); s.gain.value = dly; o.connect(s); s.connect(this.delayIn);
+      }
     },
 
-    _toneAt(time, type, f0, f1, dur, vol, dest, pan = 0, reverbAmt = 0) {
-      if (!this.ctx || this.muted) return;
-      const d = Math.max(0.015, dur);
-      const t = Math.max(this._now(), time);
-      const osc = this.ctx.createOscillator();
-      const g = this.ctx.createGain();
-      osc.type = type;
-      osc.frequency.setValueAtTime(Math.max(20, f0), t);
-      if (f1 !== f0) {
-        osc.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + d);
-      }
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(Math.max(0.0002, vol), t + Math.min(0.007, d * 0.2));
-      g.gain.exponentialRampToValueAtTime(0.0001, t + d);
-      osc.connect(g);
-      this._connectOutput(g, dest || this.musicGain, pan, reverbAmt);
-      osc.start(t);
-      osc.stop(t + d + 0.025);
-    },
-
-    _noise(dur, cutoff0, cutoff1, vol, q = 1.2, delay = 0, pan = 0, filterType = 'bandpass', dest = null, reverbAmt = 0) {
-      if (!this.ctx || !this.noiseBuf || this.muted) return;
-      const d = Math.max(0.015, dur);
-      const t = this._now() + Math.max(0, delay);
-      const src = this.ctx.createBufferSource();
-      src.buffer = this.noiseBuf;
-      const flt = this.ctx.createBiquadFilter();
-      flt.type = filterType;
-      flt.frequency.setValueAtTime(Math.max(40, cutoff0), t);
-      if (cutoff1 !== cutoff0) {
-        flt.frequency.exponentialRampToValueAtTime(Math.max(40, cutoff1), t + d);
-      }
-      flt.Q.value = q;
-      const g = this.ctx.createGain();
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(Math.max(0.0002, vol), t + Math.min(0.004, d * 0.2));
-      g.gain.exponentialRampToValueAtTime(0.0001, t + d);
-      src.connect(flt);
-      flt.connect(g);
-      this._connectOutput(g, dest || this.sfxGain, pan, reverbAmt);
-      src.start(t);
-      src.stop(t + d + 0.025);
-    },
-
-    _noiseAt(time, dur, cutoff0, cutoff1, vol, q = 1.0, filterType = 'highpass', dest = null, pan = 0, reverbAmt = 0) {
-      if (!this.ctx || !this.noiseBuf || this.muted) return;
+    // Oscillator voice with pitch glide + AD envelope. o: {pan, rev, dly, attack, glide, detune, filter:{type,f0,f1,q}, shape:'lin'}
+    _osc(t, type, f0, f1, dur, vol, bus, o = {}) {
+      const ctx = this.ctx;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
       const d = Math.max(0.012, dur);
-      const t = Math.max(this._now(), time);
-      const src = this.ctx.createBufferSource();
-      src.buffer = this.noiseBuf;
-      const flt = this.ctx.createBiquadFilter();
-      flt.type = filterType;
-      flt.frequency.setValueAtTime(Math.max(40, cutoff0), t);
-      if (cutoff1 !== cutoff0) {
-        flt.frequency.exponentialRampToValueAtTime(Math.max(40, cutoff1), t + d);
-      }
-      flt.Q.value = q;
-      const g = this.ctx.createGain();
-      g.gain.setValueAtTime(Math.max(0.0002, vol), t);
+      osc.type = type;
+      osc.frequency.setValueAtTime(Math.max(20, f0), t);
+      if (f1 && f1 !== f0) osc.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + (o.glide || d));
+      if (o.detune) osc.detune.setValueAtTime(o.detune, t);
+      const a = o.attack != null ? o.attack : 0.003;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(Math.max(0.0002, vol), t + a);
+      if (o.hold) g.gain.setValueAtTime(Math.max(0.0002, vol * 0.9), t + a + o.hold);
       g.gain.exponentialRampToValueAtTime(0.0001, t + d);
-      src.connect(flt);
-      flt.connect(g);
-      this._connectOutput(g, dest || this.musicGain, pan, reverbAmt);
-      src.start(t);
-      src.stop(t + d + 0.02);
+      let head = osc;
+      if (o.filter) {
+        const f = ctx.createBiquadFilter();
+        f.type = o.filter.type || 'lowpass';
+        f.frequency.setValueAtTime(o.filter.f0, t);
+        if (o.filter.f1 && o.filter.f1 !== o.filter.f0) f.frequency.exponentialRampToValueAtTime(Math.max(30, o.filter.f1), t + d);
+        f.Q.value = o.filter.q || 0.8;
+        osc.connect(f);
+        head = f;
+      }
+      if (o.drive) {
+        const ws = ctx.createWaveShaper();
+        ws.curve = this._distCurve;
+        head.connect(ws);
+        head = ws;
+      }
+      head.connect(g);
+      this._route(g, bus, o.pan, o.rev, o.dly);
+      osc.start(t);
+      osc.stop(t + d + 0.03);
+      osc.onended = () => { try { g.disconnect(); } catch (_) {} };
+      return osc;
     },
 
-    // ==================== SPATIAL & ARCADE SFX ====================
-    playShoot(pattern = 'twin', pan = 0) {
+    // Filtered noise voice. o: {pan, rev, q, attack, type}
+    _nz(t, dur, type, f0, f1, vol, bus, o = {}) {
+      const ctx = this.ctx;
+      if (!this.noiseBuf) return null;
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      const f = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      const d = Math.max(0.01, dur);
+      f.type = type;
+      f.frequency.setValueAtTime(Math.max(30, f0), t);
+      if (f1 && f1 !== f0) f.frequency.exponentialRampToValueAtTime(Math.max(30, f1), t + d);
+      f.Q.value = o.q != null ? o.q : 0.9;
+      const a = o.attack != null ? o.attack : 0.002;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(Math.max(0.0002, vol), t + a);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      src.connect(f);
+      f.connect(g);
+      this._route(g, bus, o.pan, o.rev, o.dly);
+      src.start(t, Math.random() * 1.6);
+      src.stop(t + d + 0.03);
+      src.onended = () => { try { g.disconnect(); } catch (_) {} };
+      return src;
+    },
+
+    _duckMusic(amount = 0.6, rel = 0.35) {
+      if (!this.musicDuck || this.paused) return;
+      const now = this._now();
+      const g = this.musicDuck.gain;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(Math.min(1, g.value), now);
+      g.linearRampToValueAtTime(amount, now + 0.02);
+      g.setTargetAtTime(1, now + 0.06, rel);
+    },
+
+    // ==================== SOUND EFFECTS ====================
+    // level: 1..4 weapon power (spread upgrades / overclock add layers)
+    playShoot(pattern = 'twin', pan = 0, level = 1) {
       if (!this._ensureSfxReady()) return;
-      const j = 0.97 + Math.random() * 0.06;
+      if (!this._rateOk('shoot', 0.04)) return;
+      if (!this._budget(0.12, 2)) return;
+      const t = this._now() + 0.002;
+      const j = rnd(0.95, 1.05);
+      const S = this.sfxGain;
       if (pattern === 'triple') {
-        this._tone('sawtooth', 430 * j, 118, 0.11, 0.15, this.sfxGain, 0, pan);
-        this._tone('triangle', 790 * j, 215, 0.085, 0.11, this.sfxGain, 0, pan);
+        this._osc(t, 'sawtooth', 520 * j, 120, 0.12, 0.17, S, { pan, filter: { f0: 3200, f1: 600, q: 1.2 } });
+        this._osc(t, 'square', 260 * j, 70, 0.09, 0.1, S, { pan });
+        this._nz(t, 0.05, 'bandpass', 2400, 900, 0.09, S, { pan, q: 1.4 });
       } else if (pattern === 'needle') {
-        this._tone('square', 1240 * j, 430, 0.052, 0.085, this.sfxGain, 0, pan);
-        this._tone('sine', 1820 * j, 640, 0.044, 0.065, this.sfxGain, 0, pan);
+        this._osc(t, 'square', 1500 * j, 520, 0.06, 0.08, S, { pan, filter: { f0: 5000, f1: 1500 } });
+        this._osc(t, 'sine', 2300 * j, 900, 0.05, 0.07, S, { pan });
       } else {
-        this._tone('triangle', 870 * j, 235, 0.09, 0.135, this.sfxGain, 0, pan);
-        this._tone('sawtooth', 530 * j, 175, 0.075, 0.08, this.sfxGain, 0, pan);
+        this._osc(t, 'square', 980 * j, 240, 0.085, 0.1, S, { pan, filter: { f0: 4200, f1: 900, q: 2 } });
+        this._osc(t, 'triangle', 620 * j, 150, 0.09, 0.14, S, { pan });
       }
+      if (level >= 2) this._osc(t, 'sine', 190 * j, 55, 0.08, 0.18, S, { pan: pan * 0.5 });
+      if (level >= 3) this._nz(t, 0.04, 'highpass', 5200, 3000, 0.07, S, { pan });
+      if (level >= 4) this._osc(t + 0.012, 'sawtooth', 1900 * j, 700, 0.05, 0.05, S, { pan, filter: { f0: 6000, f1: 2000 } });
     },
 
     playEnemyShoot(heavy = false, pan = 0) {
       if (!this._ensureSfxReady()) return;
-      if (!this._rateOk('enemyShoot', 0.025)) return;
+      if (!this._rateOk('enemyShoot', 0.05)) return;
+      if (!this._budget(0.2, 0)) return;
+      const t = this._now() + 0.002;
+      const j = rnd(0.93, 1.07);
       if (heavy) {
-        this._tone('sawtooth', 275, 84, 0.2, 0.14, this.sfxGain, 0, pan);
-        this._tone('triangle', 140, 56, 0.18, 0.09, this.sfxGain, 0, pan);
+        this._osc(t, 'sawtooth', 300 * j, 80, 0.22, 0.12, this.sfxGain, { pan, filter: { f0: 1800, f1: 300, q: 3 } });
+        this._osc(t, 'sine', 150 * j, 50, 0.2, 0.14, this.sfxGain, { pan });
       } else {
-        this._tone('square', 390, 138, 0.11, 0.085, this.sfxGain, 0, pan);
+        this._osc(t, 'square', 420 * j, 150, 0.12, 0.065, this.sfxGain, { pan, filter: { f0: 2200, f1: 500, q: 4 } });
       }
+    },
+
+    // Short rising "charge" blip that telegraphs an incoming enemy volley
+    playEnemyCharge(pan = 0, heavy = false) {
+      if (!this._ensureSfxReady()) return;
+      if (!this._rateOk('charge', 0.12)) return;
+      if (!this._budget(0.3, 0)) return;
+      const t = this._now() + 0.002;
+      this._osc(t, heavy ? 'sawtooth' : 'triangle', heavy ? 160 : 330, heavy ? 520 : 990, heavy ? 0.42 : 0.3, heavy ? 0.06 : 0.045, this.sfxGain,
+        { pan, attack: 0.2, filter: { f0: 600, f1: 3200, q: 6 } });
+    },
+
+    playDiveWarn(pan = 0) {
+      if (!this._ensureSfxReady()) return;
+      if (!this._rateOk('dive', 0.3)) return;
+      const t = this._now() + 0.002;
+      this._osc(t, 'sine', 1500, 420, 0.7, 0.08, this.sfxGain, { pan, rev: 0.15, attack: 0.05 });
+      this._osc(t, 'triangle', 1530, 430, 0.7, 0.04, this.sfxGain, { pan: -pan * 0.3, attack: 0.05 });
     },
 
     playHit(shielded = false, pan = 0) {
       if (!this._ensureSfxReady()) return;
-      if (!this._rateOk('hit', 0.016)) return;
+      if (!this._rateOk('hit', 0.028)) return;
+      if (!this._budget(0.1, 0)) return;
+      const t = this._now() + 0.002;
+      const j = rnd(0.9, 1.1);
       if (shielded) {
-        this._tone('sine', 1540, 960, 0.095, 0.14, this.sfxGain, 0, pan, 0.18);
-        this._tone('triangle', 2280, 1680, 0.065, 0.085, this.sfxGain, 0, pan);
+        // metallic FM ping
+        const car = this._osc(t, 'sine', 1650 * j, 1300 * j, 0.16, 0.11, this.sfxGain, { pan, rev: 0.2 });
+        if (car) this._osc(t, 'sine', 2480 * j, 1900, 0.09, 0.05, this.sfxGain, { pan });
+        this._nz(t, 0.03, 'highpass', 6000, 4000, 0.05, this.sfxGain, { pan });
       } else {
-        this._tone('triangle', 350, 112, 0.065, 0.13, this.sfxGain, 0, pan);
-        this._noise(0.05, 1950, 580, 0.085, 1.3, 0, pan);
+        this._osc(t, 'triangle', 420 * j, 110, 0.07, 0.13, this.sfxGain, { pan });
+        this._nz(t, 0.05, 'bandpass', 2600 * j, 700, 0.1, this.sfxGain, { pan, q: 1.6 });
       }
     },
 
     playExplosion(scale = 1, pan = 0) {
       if (!this._ensureSfxReady()) return;
+      const now = this._now();
+      // Anti-mush: successive explosions within a short window get progressively quieter
+      if (now - this._recentBoomAt > 0.18) this._recentBooms = 0;
+      this._recentBooms++;
+      this._recentBoomAt = now;
+      const crowd = this._recentBooms > 2 ? 1 / Math.sqrt(this._recentBooms - 1) : 1;
+      if (this._recentBooms > 6 && scale < 1.5) return;
       const sc = clamp(scale, 0.4, 3.2);
-      const dur = Math.min(1.25, 0.24 + sc * 0.17);
-      const verb = sc >= 1.5 ? 0.24 : 0.08;
-      this._tone('sine', 145 * Math.max(0.62, 1.2 - sc * 0.15), 25, dur, Math.min(0.42, 0.22 * sc), this.sfxGain, 0, pan);
-      this._tone('sawtooth', 96, 26, dur * 0.78, Math.min(0.24, 0.12 * sc), this.sfxGain, 0, pan);
-      this._noise(dur, 1350, 100, Math.min(0.46, 0.25 * sc), 0.9, 0, pan, 'bandpass', this.sfxGain, verb);
-      if (sc >= 1.8) {
-        this._noise(dur * 1.15, 720, 72, 0.35, 0.75, 0.085, pan * 0.6, 'lowpass', this.sfxGain, 0.3);
-        this._tone('sine', 84, 20, dur * 1.2, 0.36, this.sfxGain, 0.07, pan * 0.5);
+      const dur = Math.min(1.6, 0.3 + sc * 0.22);
+      if (!this._budget(dur, sc >= 1.5 ? 2 : 1)) return;
+      const t = now + 0.003;
+      const v = crowd;
+      const S = this.sfxGain;
+      const j = rnd(0.88, 1.12);
+      const verb = sc >= 1.5 ? 0.3 : 0.12;
+      // 1. transient crack
+      this._nz(t, 0.03, 'highpass', 2800, 1800, 0.22 * v * Math.min(1.4, sc), S, { pan });
+      // 2. body: noise lowpass sweep
+      this._nz(t, dur, 'lowpass', 3200 * j, 140, Math.min(0.55, 0.3 * sc) * v, S, { pan, q: 0.7, rev: verb });
+      // 3. sub thump
+      this._osc(t, 'sine', 120 * j, 32, Math.min(0.9, 0.22 + sc * 0.16), Math.min(0.62, 0.34 * sc) * v, S, { pan: pan * 0.4 });
+      // 4. gritty mid layer
+      this._osc(t, 'sawtooth', 160 * j, 40, dur * 0.6, Math.min(0.2, 0.09 * sc) * v, S, { pan, filter: { f0: 900, f1: 120, q: 1 }, drive: true });
+      if (sc >= 1.4) {
+        // 5. crackle debris tail
+        const n = Math.min(7, Math.floor(sc * 2.5));
+        for (let i = 0; i < n; i++) {
+          this._nz(t + 0.06 + Math.random() * dur * 0.6, 0.04 + Math.random() * 0.05, 'bandpass', rnd(1200, 4200), rnd(500, 1500), 0.06 * v, S,
+            { pan: clamp(pan + rnd(-0.4, 0.4), -1, 1), q: 2 });
+        }
+        this._nz(t + 0.05, dur * 1.3, 'lowpass', 900, 60, 0.32 * v, S, { pan: pan * 0.5, rev: 0.35 });
+        this._duckMusic(sc >= 2.4 ? 0.45 : 0.7, sc >= 2.4 ? 0.6 : 0.3);
+      }
+      if (sc >= 2.4) {
+        this._osc(t + 0.04, 'sine', 70, 22, 1.4, 0.55 * v, S, {});
       }
     },
 
     playPlayerHit() {
       if (!this._ensureSfxReady()) return;
-      this._tone('sawtooth', 205, 38, 0.36, 0.34, this.sfxGain, 0, 0, 0.14);
-      this._tone('square', 410, 125, 0.16, 0.16, this.sfxGain, 0.02);
-      this._noise(0.3, 980, 130, 0.32, 0.85);
+      const t = this._now() + 0.002;
+      const S = this.sfxGain;
+      this._osc(t, 'sawtooth', 240, 40, 0.42, 0.3, S, { drive: true, filter: { f0: 2400, f1: 200, q: 1.2 }, rev: 0.15 });
+      this._osc(t, 'sine', 110, 30, 0.45, 0.45, S, {});
+      this._nz(t, 0.35, 'lowpass', 2600, 160, 0.38, S, { rev: 0.2 });
+      this._osc(t + 0.05, 'square', 880, 860, 0.09, 0.07, S, { pan: -0.2 });
+      this._osc(t + 0.17, 'square', 660, 650, 0.12, 0.07, S, { pan: 0.2 });
+      this._duckMusic(0.5, 0.45);
+    },
+
+    // Barrier power-up absorbing a hit
+    playBarrierHit() {
+      if (!this._ensureSfxReady()) return;
+      const t = this._now() + 0.002;
+      this._osc(t, 'sine', 520, 1400, 0.35, 0.18, this.sfxGain, { rev: 0.35 });
+      this._osc(t, 'triangle', 1040, 2100, 0.28, 0.08, this.sfxGain, { rev: 0.3 });
+      this._nz(t, 0.25, 'bandpass', 3000, 7000, 0.08, this.sfxGain, { q: 3 });
     },
 
     playBunkerChip(pan = 0) {
       if (!this._ensureSfxReady()) return;
-      if (!this._rateOk('bunker', 0.02)) return;
-      this._tone('square', 670, 230, 0.07, 0.09, this.sfxGain, 0, pan);
-      this._noise(0.08, 2500, 760, 0.11, 1.6, 0, pan);
+      if (!this._rateOk('bunker', 0.04)) return;
+      if (!this._budget(0.1, 0)) return;
+      const t = this._now() + 0.002;
+      this._osc(t, 'square', jit(700, 0.08), 240, 0.08, 0.075, this.sfxGain, { pan, filter: { f0: 3000, f1: 800 } });
+      this._nz(t, 0.09, 'bandpass', jit(2800, 0.1), 900, 0.1, this.sfxGain, { pan, q: 1.8 });
     },
 
-    playDash() {
+    playDash(dir = 1) {
       if (!this._ensureSfxReady()) return;
-      this._noise(0.24, 520, 3100, 0.19, 1.8, 0, 0, 'bandpass', this.sfxGain, 0.18);
-      this._tone('sine', 240, 720, 0.19, 0.13, this.sfxGain, 0, 0, 0.12);
+      const t = this._now() + 0.002;
+      const ctx = this.ctx;
+      // whoosh with stereo sweep in the dash direction
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass'; f.Q.value = 1.6;
+      f.frequency.setValueAtTime(500, t);
+      f.frequency.exponentialRampToValueAtTime(3600, t + 0.12);
+      f.frequency.exponentialRampToValueAtTime(900, t + 0.3);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.34, t + 0.06);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+      src.connect(f); f.connect(g);
+      let out = g;
+      if (this._canPan) {
+        const p = ctx.createStereoPanner();
+        p.pan.setValueAtTime(-0.6 * dir, t);
+        p.pan.linearRampToValueAtTime(0.7 * dir, t + 0.3);
+        g.connect(p); out = p;
+      }
+      out.connect(this.sfxGain);
+      src.start(t, Math.random());
+      src.stop(t + 0.35);
+      src.onended = () => { try { g.disconnect(); } catch (_) {} };
+      this._osc(t, 'sine', 260, 820, 0.2, 0.1, this.sfxGain, { rev: 0.12 });
     },
 
-    playPowerup() {
+    playPowerup(kind = 'generic') {
       if (!this._ensureSfxReady()) return;
-      const notes = [523.25, 659.25, 783.99, 1046.5];
-      notes.forEach((f, i) => {
-        this._tone('triangle', f, f * 1.02, 0.15, 0.15, this.sfxGain, i * 0.052, (i - 1.5) * 0.18, 0.25);
-        this._tone('sine', f * 2, f * 2, 0.12, 0.055, this.sfxGain, i * 0.052, (i - 1.5) * 0.18);
+      const t = this._now() + 0.002;
+      const sets = {
+        overclock: [72, 76, 79, 84, 88],
+        shield: [67, 71, 74, 79],
+        nova: [74, 78, 81, 86, 90],
+        wingman: [69, 73, 76, 81],
+        scatter: [76, 79, 83, 88],
+        barrier: [64, 71, 76, 83],
+        generic: [72, 76, 79, 84],
+      };
+      const notes = sets[kind] || sets.generic;
+      notes.forEach((m, i) => {
+        const f = mtof(m);
+        const pan = (i / (notes.length - 1) - 0.5) * 0.6;
+        this._osc(t + i * 0.05, 'square', f, f, 0.14, 0.07, this.sfxGain, { pan, filter: { f0: 4000, f1: 1500 }, rev: 0.25 });
+        this._osc(t + i * 0.05, 'sine', f * 2, f * 2, 0.16, 0.06, this.sfxGain, { pan, rev: 0.2 });
       });
+      this._nz(t, 0.3, 'highpass', 4000, 9000, 0.05, this.sfxGain, { rev: 0.3 });
+    },
+
+    playCombo(n = 10) {
+      if (!this._ensureSfxReady()) return;
+      const t = this._now() + 0.002;
+      const base = 72 + Math.min(12, Math.floor(n / 10) * 2);
+      [0, 4, 7, 12].forEach((iv, i) => {
+        const f = mtof(base + iv);
+        this._osc(t + i * 0.045, 'triangle', f, f, 0.22, 0.1, this.sfxGain, { pan: (i - 1.5) * 0.25, rev: 0.3, dly: 0.2 });
+      });
+    },
+
+    playWaveClear() {
+      if (!this._ensureSfxReady()) return;
+      const t = this._now() + 0.002;
+      const chord = [62, 66, 69, 74, 78, 81];
+      chord.forEach((m, i) => {
+        const f = mtof(m);
+        this._osc(t + i * 0.06, 'sawtooth', f, f, 0.9, 0.05, this.sfxGain, { pan: (i / 5 - 0.5) * 0.8, filter: { f0: 3500, f1: 900 }, rev: 0.4, attack: 0.02 });
+        this._osc(t + i * 0.06, 'sine', f * 2, f * 2, 0.6, 0.04, this.sfxGain, { pan: (i / 5 - 0.5) * 0.8, rev: 0.3 });
+      });
+      this._nz(t, 0.9, 'bandpass', 800, 6000, 0.08, this.sfxGain, { q: 1.5, rev: 0.4 });
+    },
+
+    playLowHealth() {
+      if (!this._ensureSfxReady()) return;
+      if (!this._rateOk('lowhp', 0.8)) return;
+      const t = this._now() + 0.002;
+      this._osc(t, 'square', 988, 980, 0.09, 0.05, this.sfxGain, { filter: { f0: 2500, f1: 2000 } });
+      this._osc(t + 0.14, 'square', 740, 735, 0.12, 0.05, this.sfxGain, { filter: { f0: 2500, f1: 2000 } });
     },
 
     playSpecial(shipId) {
       if (!this._ensureSfxReady()) return;
+      const t = this._now() + 0.003;
+      const S = this.sfxGain;
+      this._duckMusic(0.5, 0.6);
       if (shipId === 'valkyrie') {
-        this._tone('sine', 165, 920, 0.44, 0.28, this.sfxGain, 0, 0, 0.28);
-        this._tone('sawtooth', 460, 82, 0.68, 0.24, this.sfxGain, 0.08, 0, 0.25);
-        this._noise(0.58, 2400, 240, 0.28, 1.1, 0.04, 0, 'bandpass', this.sfxGain, 0.26);
+        this._osc(t, 'sine', 90, 30, 0.9, 0.55, S, {});
+        this._osc(t, 'sine', 180, 1100, 0.55, 0.22, S, { rev: 0.35 });
+        this._osc(t + 0.05, 'sawtooth', 520, 80, 0.8, 0.16, S, { filter: { f0: 4000, f1: 300 }, rev: 0.3 });
+        this._nz(t, 0.9, 'bandpass', 3000, 250, 0.32, S, { q: 0.8, rev: 0.35 });
+        for (let i = 0; i < 4; i++) this._osc(t + 0.08 + i * 0.07, 'triangle', mtof(86 + i * 3), mtof(86 + i * 3), 0.3, 0.05, S, { pan: (i - 1.5) * 0.4, rev: 0.4 });
       } else if (shipId === 'aegis') {
-        this._tone('sawtooth', 110, 235, 1.15, 0.24, this.sfxGain, 0, 0, 0.22);
-        this._tone('square', 330, 165, 1.15, 0.14, this.sfxGain);
-        this._noise(1.05, 1900, 440, 0.21, 2.2, 0, 0, 'bandpass', this.sfxGain, 0.2);
+        this._osc(t, 'sawtooth', 70, 140, 1.9, 0.22, S, { filter: { f0: 400, f1: 2400, q: 4 }, attack: 0.08, hold: 1.2, drive: true, rev: 0.25 });
+        this._osc(t, 'square', 140, 280, 1.9, 0.09, S, { attack: 0.08, hold: 1.2 });
+        this._osc(t, 'sine', 55, 45, 1.9, 0.4, S, { attack: 0.05, hold: 1.3 });
+        this._nz(t, 1.85, 'bandpass', 1400, 600, 0.22, S, { q: 1.4, attack: 0.05, rev: 0.2 });
       } else {
-        for (let i = 0; i < 6; i++) {
-          const pan = ((i / 5) - 0.5) * 1.1;
-          this._tone('triangle', 640 + i * 75, 1320 + i * 95, 0.14, 0.12, this.sfxGain, i * 0.052, pan, 0.2);
-          this._noise(0.12, 2400, 880, 0.1, 1.4, i * 0.052, pan);
+        for (let i = 0; i < 10; i++) {
+          const pan = ((i / 9) - 0.5) * 1.4;
+          this._osc(t + i * 0.045, 'square', jit(700 + i * 60, 0.03), 1500 + i * 80, 0.12, 0.06, S, { pan, filter: { f0: 4000, f1: 1800 } });
+          this._nz(t + i * 0.045, 0.16, 'bandpass', 2800, 900, 0.08, S, { pan, q: 1.3 });
         }
+        this._osc(t, 'sine', 120, 40, 0.5, 0.35, S, {});
       }
     },
 
     playBossWarn() {
       if (!this._ensureSfxReady()) return;
+      if (!this._rateOk('bosswarn', 0.6)) return;
+      const t = this._now() + 0.003;
+      const S = this.sfxGain;
+      // Air-raid style two-tone siren sweeps + sub pulses
       for (let i = 0; i < 3; i++) {
-        const d = i * 0.36;
-        this._tone('sawtooth', 220, 175, 0.27, 0.22, this.sfxGain, d, 0, 0.26);
-        this._tone('square', 440, 350, 0.25, 0.12, this.sfxGain, d, 0, 0.24);
-        this._tone('sine', 92, 46, 0.24, 0.22, this.sfxGain, d);
+        const d = t + i * 0.55;
+        this._osc(d, 'sawtooth', 330, 620, 0.5, 0.14, S, { glide: 0.28, filter: { f0: 2400, f1: 1600, q: 2 }, rev: 0.3, attack: 0.03 });
+        this._osc(d, 'square', 331, 622, 0.5, 0.06, S, { glide: 0.28, detune: 12, attack: 0.03 });
+        this._osc(d, 'sine', 70, 40, 0.35, 0.4, S, {});
       }
+      this._duckMusic(0.55, 0.8);
     },
 
     playBeamCharge() {
       if (!this._ensureSfxReady()) return;
-      this._tone('sine', 175, 1080, 0.88, 0.19, this.sfxGain, 0, 0, 0.22);
-      this._tone('triangle', 265, 1420, 0.88, 0.11, this.sfxGain, 0, 0, 0.2);
-      this._noise(0.8, 320, 2200, 0.09, 3.2, 0, 0, 'bandpass', this.sfxGain, 0.18);
+      const t = this._now() + 0.003;
+      this._osc(t, 'sine', 160, 1200, 1.0, 0.16, this.sfxGain, { attack: 0.3, rev: 0.25 });
+      this._osc(t, 'sawtooth', 80, 320, 1.0, 0.09, this.sfxGain, { attack: 0.4, filter: { f0: 300, f1: 2200, q: 8 } });
+      this._nz(t, 1.0, 'bandpass', 300, 3000, 0.08, this.sfxGain, { q: 4, attack: 0.5 });
     },
 
     playBeamFire() {
       if (!this._ensureSfxReady()) return;
-      this._tone('sawtooth', 148, 68, 0.84, 0.28, this.sfxGain, 0, 0, 0.24);
-      this._noise(0.78, 1550, 220, 0.26, 0.9, 0, 0, 'bandpass', this.sfxGain, 0.22);
+      const t = this._now() + 0.003;
+      this._osc(t, 'sawtooth', 110, 60, 1.1, 0.22, this.sfxGain, { drive: true, filter: { f0: 2000, f1: 400 }, rev: 0.25, hold: 0.6 });
+      this._osc(t, 'sine', 55, 40, 1.1, 0.4, this.sfxGain, { hold: 0.6 });
+      this._nz(t, 1.05, 'bandpass', 1800, 300, 0.28, this.sfxGain, { q: 0.9, rev: 0.25, hold: 0.6 });
+      this._duckMusic(0.6, 0.5);
     },
 
     playWarpSwell() {
       if (!this._ensureSfxReady()) return;
-      this._tone('sawtooth', 74, 225, 1.45, 0.17, this.musicGain, 0, 0, 0.35);
-      this._tone('triangle', 148, 450, 1.4, 0.15, this.musicGain, 0.05, 0, 0.35);
-      this._noise(1.25, 320, 2800, 0.17, 1.5, 0, 0, 'bandpass', this.sfxGain, 0.28);
+      const t = this._now() + 0.003;
+      this._osc(t, 'sawtooth', 70, 260, 1.6, 0.14, this.sfxGain, { attack: 0.5, filter: { f0: 300, f1: 3000, q: 3 }, rev: 0.4 });
+      this._osc(t, 'sine', 140, 560, 1.5, 0.12, this.sfxGain, { attack: 0.4, rev: 0.35 });
+      this._nz(t, 1.4, 'bandpass', 300, 4200, 0.18, this.sfxGain, { q: 1.4, attack: 0.6, rev: 0.35 });
+      this._nz(t + 1.2, 0.8, 'lowpass', 2000, 80, 0.3, this.sfxGain, { rev: 0.4 });
+      this._osc(t + 1.2, 'sine', 90, 30, 0.8, 0.4, this.sfxGain, {});
     },
 
     playThrusterBurst() {
       if (!this._ensureSfxReady()) return;
-      this._tone('sawtooth', 115, 44, 0.42, 0.22, this.sfxGain, 0, 0, 0.15);
-      this._tone('sine', 210, 560, 0.22, 0.11, this.sfxGain, 0.02);
-      this._noise(0.4, 380, 1500, 0.22, 1.1, 0, 0, 'bandpass', this.sfxGain, 0.2);
+      if (!this._rateOk('thrust', 0.15)) return;
+      const t = this._now() + 0.003;
+      this._osc(t, 'sawtooth', 120, 45, 0.45, 0.18, this.sfxGain, { filter: { f0: 1200, f1: 200 }, rev: 0.15 });
+      this._nz(t, 0.45, 'bandpass', 400, 1800, 0.24, this.sfxGain, { q: 1.1, rev: 0.2 });
     },
 
     playUiClick(hi = false) {
       if (!this._ensureSfxReady()) return;
-      this._tone('triangle', hi ? 780 : 540, hi ? 1060 : 690, 0.06, 0.13, this.sfxGain, 0, 0, 0.12);
-      this._tone('sine', hi ? 1480 : 1040, hi ? 1620 : 1120, 0.028, 0.05, this.sfxGain);
+      if (!this._rateOk('ui', 0.03)) return;
+      const t = this._now() + 0.002;
+      this._osc(t, 'triangle', hi ? 880 : 620, hi ? 1320 : 780, 0.07, 0.12, this.sfxGain, { rev: 0.1 });
+      this._osc(t, 'sine', hi ? 1760 : 1240, hi ? 1900 : 1300, 0.04, 0.05, this.sfxGain, {});
     },
 
     playCommsBleep(role = 'cmd') {
       if (!this._ensureSfxReady()) return;
-      // Opening radio squelch burst
-      this._noise(0.032, 2600, 1800, 0.075, 3.2, 0, -0.15, 'bandpass', this.sfxGain, 0.1);
-
+      const t = this._now() + 0.003;
+      const S = this.sfxGain;
+      this._nz(t, 0.04, 'bandpass', 2600, 1800, 0.08, S, { q: 3, pan: -0.15 });
       if (role === 'warn') {
-        const freqs = [660, 880, 660, 880, 580];
-        freqs.forEach((f, i) => {
-          const d = 0.035 + i * 0.075;
-          this._tone('square', f, f * 0.96, 0.055, 0.1, this.sfxGain, d, 0.1, 0.16);
-          this._tone('sawtooth', f * 0.5, f * 0.5, 0.055, 0.08, this.sfxGain, d, 0.1);
+        [660, 880, 660, 880, 580].forEach((f, i) => {
+          this._osc(t + 0.035 + i * 0.075, 'square', f, f * 0.96, 0.055, 0.07, S, { pan: 0.1, rev: 0.15, filter: { f0: 3000, f1: 2000 } });
         });
       } else if (role === 'ai') {
-        const freqs = [784, 987.77, 1174.66, 987.77, 1318.51, 1046.5];
-        freqs.forEach((f, i) => {
-          const d = 0.035 + i * 0.058;
-          this._tone('sine', f, f * 1.01, 0.048, 0.1, this.sfxGain, d, -0.15, 0.22);
-          this._tone('triangle', f * 2, f * 2, 0.036, 0.035, this.sfxGain, d, -0.15);
+        [784, 987.77, 1174.66, 987.77, 1318.51, 1046.5].forEach((f, i) => {
+          this._osc(t + 0.035 + i * 0.058, 'sine', f, f * 1.01, 0.05, 0.09, S, { pan: -0.15, rev: 0.22 });
         });
       } else {
-        // 'cmd': authoritative tactical voice cadence
-        const freqs = [330, 392, 370, 440, 392, 311];
-        freqs.forEach((f, i) => {
-          const d = 0.035 + i * 0.062;
-          this._tone('triangle', f, f * (i === freqs.length - 1 ? 0.88 : 1.02), 0.05, 0.11, this.sfxGain, d, 0.15, 0.14);
+        [330, 392, 370, 440, 392, 311].forEach((f, i) => {
+          this._osc(t + 0.035 + i * 0.062, 'triangle', f, f * (i === 5 ? 0.88 : 1.02), 0.05, 0.1, S, { pan: 0.15, rev: 0.14 });
         });
       }
-
-      // Closing mic click
-      this._noise(0.022, 2100, 1200, 0.05, 2.6, 0.42, -0.1);
+      this._nz(t + 0.42, 0.025, 'bandpass', 2100, 1200, 0.05, S, { q: 2.6, pan: -0.1 });
     },
 
     playVictoryFanfare() {
       if (!this._ensureSfxReady()) return;
-      const chord = [293.66, 369.99, 440.0, 587.33, 739.99, 880.0];
-      chord.forEach((f, i) => {
-        const pan = ((i / (chord.length - 1)) - 0.5) * 0.7;
-        this._tone('triangle', f, f, 0.72, 0.16, this.musicGain, i * 0.1, pan, 0.35);
-        this._tone('sine', f * 0.5, f * 0.5, 0.88, 0.12, this.musicGain, i * 0.1, pan, 0.25);
+      const t = this._now() + 0.003;
+      [62, 66, 69, 74, 78, 81].forEach((m, i) => {
+        const f = mtof(m);
+        const pan = (i / 5 - 0.5) * 0.7;
+        this._osc(t + i * 0.09, 'sawtooth', f, f, 1.0, 0.05, this.sfxGain, { pan, filter: { f0: 3000, f1: 1200 }, rev: 0.4, attack: 0.02, hold: 0.4 });
+        this._osc(t + i * 0.09, 'triangle', f, f, 1.1, 0.07, this.sfxGain, { pan, rev: 0.35, hold: 0.4 });
       });
+    },
+
+    playGameOver() {
+      if (!this._ensureSfxReady()) return;
+      const t = this._now() + 0.003;
+      [69, 65, 62, 57].forEach((m, i) => {
+        const f = mtof(m);
+        this._osc(t + i * 0.22, 'sawtooth', f, f * 0.985, 0.6, 0.07, this.sfxGain, { filter: { f0: 1800, f1: 500 }, rev: 0.4, attack: 0.01 });
+      });
+      this._osc(t, 'sine', 80, 28, 1.6, 0.5, this.sfxGain, {});
+      this._nz(t, 1.4, 'lowpass', 1200, 60, 0.3, this.sfxGain, { rev: 0.4 });
+      this._duckMusic(0.3, 1.2);
     },
 
     startUfoLoop() {
       if (!this._ensureSfxReady() || this.ufoOsc) return;
+      const ctx = this.ctx;
       const now = this._now();
-      const osc = this.ctx.createOscillator();
-      const lfo = this.ctx.createOscillator();
-      const lfoGain = this.ctx.createGain();
-      const g = this.ctx.createGain();
-
+      const osc = ctx.createOscillator();
+      const lfo = ctx.createOscillator();
+      const lfoGain = ctx.createGain();
+      const g = ctx.createGain();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(540, now);
       lfo.type = 'sine';
@@ -2175,441 +2629,611 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       lfoGain.gain.setValueAtTime(135, now);
       lfo.connect(lfoGain);
       lfoGain.connect(osc.frequency);
-
       g.gain.setValueAtTime(0.0001, now);
-      g.gain.linearRampToValueAtTime(0.085, now + 0.08);
+      g.gain.linearRampToValueAtTime(0.08, now + 0.1);
       osc.connect(g);
-      this._connectOutput(g, this.sfxGain, 0, 0.2);
-
+      let out = g;
+      if (this._canPan) {
+        const p = ctx.createStereoPanner();
+        g.connect(p);
+        out = p;
+        this.ufoPanner = p;
+      }
+      out.connect(this.sfxGain);
       osc.start(now);
       lfo.start(now);
-      this.ufoOsc = osc;
-      this.ufoLfo = lfo;
-      this.ufoGain = g;
+      this.ufoOsc = osc; this.ufoLfo = lfo; this.ufoGain = g;
+    },
+
+    setUfoPan(pan) {
+      if (this.ufoPanner && this.ctx) this.ufoPanner.pan.setTargetAtTime(clamp(pan, -0.95, 0.95), this._now(), 0.05);
     },
 
     stopUfoLoop() {
-      if (this.ufoOsc) {
-        const osc = this.ufoOsc;
-        const lfo = this.ufoLfo;
-        const g = this.ufoGain;
-        this.ufoOsc = null;
-        this.ufoLfo = null;
-        this.ufoGain = null;
-        try {
-          const now = this._now();
-          if (g) {
-            g.gain.cancelScheduledValues(now);
-            g.gain.setValueAtTime(Math.max(0.0001, g.gain.value || 0.08), now);
-            g.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
-          }
-          osc.stop(now + 0.06);
-          lfo.stop(now + 0.06);
-        } catch (_) {}
-      }
+      if (!this.ufoOsc) return;
+      const osc = this.ufoOsc, lfo = this.ufoLfo, g = this.ufoGain;
+      this.ufoOsc = null; this.ufoLfo = null; this.ufoGain = null; this.ufoPanner = null;
+      try {
+        const now = this._now();
+        g.gain.cancelScheduledValues(now);
+        g.gain.setTargetAtTime(0.0001, now, 0.02);
+        osc.stop(now + 0.1);
+        lfo.stop(now + 0.1);
+        osc.onended = () => { try { g.disconnect(); } catch (_) {} };
+      } catch (_) {}
     },
 
-    // ==================== PROCEDURAL SYNTH INSTRUMENTS ====================
-    _playKick(time, vol = 0.34, pitchHi = 134, pitchLo = 33) {
-      const t = Math.max(this._now(), time);
-      const osc = this.ctx.createOscillator();
-      const g = this.ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(pitchHi, t);
-      osc.frequency.exponentialRampToValueAtTime(pitchLo, t + 0.11);
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(vol, t + 0.004);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.19);
-      osc.connect(g);
-      g.connect(this.musicGain);
-      osc.start(t);
-      osc.stop(t + 0.21);
-
-      // Subtle punch transient
-      this._toneAt(t, 'triangle', 220, 70, 0.032, vol * 0.35, this.musicGain);
+    // ==================== MUSIC INSTRUMENTS ====================
+    _kick(t, vol, hi = 150, lo = 42, decay = 0.32) {
+      this._osc(t, 'sine', hi, lo, decay, vol, this.drumBus, { glide: 0.09, attack: 0.002 });
+      this._nz(t, 0.012, 'highpass', 3000, 2000, vol * 0.35, this.drumBus, {});
+    },
+    _snare(t, vol, rev = 0.18) {
+      this._osc(t, 'triangle', 210, 140, 0.11, vol * 0.7, this.drumBus, {});
+      this._nz(t, 0.17, 'bandpass', 1900, 1500, vol, this.drumBus, { q: 0.7, rev });
+      this._nz(t, 0.08, 'highpass', 5000, 5000, vol * 0.5, this.drumBus, {});
+    },
+    _clap(t, vol) {
+      for (let i = 0; i < 3; i++) this._nz(t + i * 0.011, 0.03, 'bandpass', 1300, 1200, vol * 0.8, this.drumBus, { q: 1.4 });
+      this._nz(t + 0.033, 0.16, 'bandpass', 1300, 1000, vol, this.drumBus, { q: 1.2, rev: 0.25 });
+    },
+    _hat(t, vol, open = false, pan = 0) {
+      this._nz(t, open ? 0.16 : 0.035, 'highpass', open ? 7000 : 8200, open ? 6000 : 8000, vol, this.drumBus, { pan, q: 0.6 });
+    },
+    _tom(t, midi, vol) {
+      const f = mtof(midi);
+      this._osc(t, 'sine', f * 1.5, f, 0.3, vol, this.drumBus, { glide: 0.08, rev: 0.25 });
+      this._nz(t, 0.05, 'lowpass', 2500, 800, vol * 0.3, this.drumBus, {});
+    },
+    _crash(t, vol) {
+      this._nz(t, 1.3, 'highpass', 5200, 3800, vol, this.drumBus, { q: 0.4, rev: 0.35 });
+      this._nz(t, 0.5, 'bandpass', 3500, 2500, vol * 0.5, this.drumBus, { q: 0.8 });
+    },
+    _riser(t, dur, vol) {
+      this._nz(t, dur, 'bandpass', 400, 6000, vol, this.musicFilter, { q: 2, attack: dur * 0.85, rev: 0.3 });
+    },
+    _impact(t, vol) {
+      this._osc(t, 'sine', 90, 28, 1.4, vol, this.drumBus, { glide: 0.5 });
+      this._nz(t, 1.2, 'lowpass', 1500, 60, vol * 0.45, this.drumBus, { rev: 0.45 });
+    },
+    // Sidechain-style pump on pads/bass on each kick
+    _pump(t, depth = 0.45, rel = 0.12) {
+      [this.padBus, this.bassBus].forEach((b) => {
+        b.gain.setValueAtTime(1 - depth, t);
+        b.gain.setTargetAtTime(1, t + 0.012, rel);
+      });
     },
 
-    _playSnare(time, vol = 0.2) {
-      const t = Math.max(this._now(), time);
-      this._toneAt(t, 'triangle', 195, 92, 0.095, vol * 0.65, this.musicGain);
-      this._noiseAt(t, 0.13, 1450, 2600, vol, 0.9, 'bandpass', this.musicGain, 0, 0.24);
-    },
-
-    _playHat(time, vol = 0.075, open = false) {
-      const t = Math.max(this._now(), time);
-      this._noiseAt(t, open ? 0.12 : 0.038, 6800, 9200, vol, 1.4, 'highpass', this.musicGain, (Math.random() - 0.5) * 0.3, 0.1);
-    },
-
-    _playSynthLead(time, freq, dur, vol, pan = 0, cutoffPeak = 2900, reverbAmt = 0.32) {
-      const t = Math.max(this._now(), time);
-      const d = Math.max(0.04, dur);
-      const o1 = this.ctx.createOscillator();
-      const o2 = this.ctx.createOscillator();
-      const flt = this.ctx.createBiquadFilter();
-      const g = this.ctx.createGain();
-
-      o1.type = 'sawtooth';
-      o2.type = 'sawtooth';
-      o1.frequency.setValueAtTime(freq, t);
-      o2.frequency.setValueAtTime(freq, t);
-      o1.detune.setValueAtTime(-7, t);
-      o2.detune.setValueAtTime(7, t);
-
+    _bass(t, midi, dur, vol, style = 'saw') {
+      const ctx = this.ctx;
+      const f = mtof(midi);
+      const o1 = ctx.createOscillator();
+      const o2 = ctx.createOscillator();
+      const flt = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      const d = Math.max(0.05, dur);
+      o1.type = style === 'soft' ? 'triangle' : 'sawtooth';
+      o2.type = style === 'soft' ? 'sine' : 'square';
+      o1.frequency.setValueAtTime(f, t);
+      o2.frequency.setValueAtTime(f * 0.5, t);
       flt.type = 'lowpass';
-      flt.Q.value = 2.6;
-      flt.frequency.setValueAtTime(cutoffPeak, t);
-      flt.frequency.exponentialRampToValueAtTime(Math.max(240, freq * 1.9), t + Math.min(d, 0.22));
-
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(vol, t + 0.012);
-      g.gain.setValueAtTime(vol * 0.82, t + d * 0.65);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + d);
-
-      o1.connect(flt);
-      o2.connect(flt);
-      flt.connect(g);
-      this._connectOutput(g, this.musicGain, pan, reverbAmt);
-
-      o1.start(t);
-      o2.start(t);
-      o1.stop(t + d + 0.03);
-      o2.stop(t + d + 0.03);
-    },
-
-    _playSynthBass(time, freq, dur, vol, cutoff = 720, type = 'sawtooth') {
-      const t = Math.max(this._now(), time);
-      const d = Math.max(0.04, dur);
-      const osc = this.ctx.createOscillator();
-      const sub = this.ctx.createOscillator();
-      const flt = this.ctx.createBiquadFilter();
-      const g = this.ctx.createGain();
-
-      osc.type = type;
-      osc.frequency.setValueAtTime(freq, t);
-      sub.type = 'sine';
-      sub.frequency.setValueAtTime(freq, t);
-
-      flt.type = 'lowpass';
-      flt.Q.value = 2.4;
-      flt.frequency.setValueAtTime(cutoff, t);
-      flt.frequency.exponentialRampToValueAtTime(Math.max(90, freq * 1.4), t + d * 0.85);
-
+      flt.Q.value = style === 'acid' ? 7 : 3;
+      const peak = style === 'soft' ? 700 : style === 'acid' ? 2600 : 1500;
+      flt.frequency.setValueAtTime(peak, t);
+      flt.frequency.exponentialRampToValueAtTime(Math.max(90, f * 1.6), t + Math.min(d, 0.25));
       g.gain.setValueAtTime(0.0001, t);
       g.gain.linearRampToValueAtTime(vol, t + 0.006);
+      g.gain.setTargetAtTime(vol * 0.7, t + 0.02, d * 0.4);
+      g.gain.setValueAtTime(vol * 0.6, t + d * 0.85);
       g.gain.exponentialRampToValueAtTime(0.0001, t + d);
-
-      osc.connect(flt);
-      flt.connect(g);
-      sub.connect(g);
-      g.connect(this.musicGain);
-
-      osc.start(t);
-      sub.start(t);
-      osc.stop(t + d + 0.025);
-      sub.stop(t + d + 0.025);
-    },
-
-    _playBrassStab(time, rootMidi, dur = 0.24, vol = 0.14) {
-      const t = Math.max(this._now(), time);
-      const f1 = mtof(rootMidi + 12);
-      const f2 = mtof(rootMidi + 19); // Power fifth
-      const o1 = this.ctx.createOscillator();
-      const o2 = this.ctx.createOscillator();
-      const o3 = this.ctx.createOscillator();
-      const flt = this.ctx.createBiquadFilter();
-      const g = this.ctx.createGain();
-
-      o1.type = 'sawtooth';
-      o2.type = 'square';
-      o3.type = 'sawtooth';
-      o1.frequency.setValueAtTime(f1, t);
-      o2.frequency.setValueAtTime(f1 * 1.004, t);
-      o3.frequency.setValueAtTime(f2, t);
-
-      flt.type = 'lowpass';
-      flt.Q.value = 3.0;
-      flt.frequency.setValueAtTime(3400, t);
-      flt.frequency.exponentialRampToValueAtTime(480, t + dur);
-
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(vol, t + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-
+      const sub = ctx.createGain();
+      sub.gain.value = 0.55;
       o1.connect(flt);
-      o2.connect(flt);
-      o3.connect(flt);
+      o2.connect(sub);
+      sub.connect(flt);
       flt.connect(g);
-      this._connectOutput(g, this.musicGain, 0, 0.28);
-
-      o1.start(t);
-      o2.start(t);
-      o3.start(t);
-      o1.stop(t + dur + 0.03);
-      o2.stop(t + dur + 0.03);
-      o3.stop(t + dur + 0.03);
+      g.connect(this.bassBus);
+      o1.start(t); o2.start(t);
+      o1.stop(t + d + 0.03); o2.stop(t + d + 0.03);
+      o1.onended = () => { try { g.disconnect(); } catch (_) {} };
+      if (d > 0.6) this._trackLong([o1, o2], g, t + d);
     },
 
-    _playPadChord(time, midiNotes, dur, vol = 0.065, peakCutoff = 1100) {
-      const t = Math.max(this._now(), time);
-      const flt = this.ctx.createBiquadFilter();
-      const g = this.ctx.createGain();
+    _pad(t, midis, dur, vol, cutoff = 1400, attack = 0.35) {
+      const ctx = this.ctx;
+      const flt = ctx.createBiquadFilter();
+      const g = ctx.createGain();
       flt.type = 'lowpass';
-      flt.Q.value = 1.4;
-      flt.frequency.setValueAtTime(280, t);
-      flt.frequency.linearRampToValueAtTime(peakCutoff, t + dur * 0.45);
-      flt.frequency.exponentialRampToValueAtTime(320, t + dur);
-
+      flt.Q.value = 0.9;
+      flt.frequency.setValueAtTime(cutoff * 0.35, t);
+      flt.frequency.linearRampToValueAtTime(cutoff, t + dur * 0.4);
+      flt.frequency.linearRampToValueAtTime(cutoff * 0.5, t + dur);
+      const a = Math.min(attack, dur * 0.4);
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(vol, t + Math.min(0.42, dur * 0.25));
-      g.gain.setValueAtTime(vol * 0.85, t + dur * 0.72);
+      g.gain.linearRampToValueAtTime(vol, t + a);
+      g.gain.setValueAtTime(vol, t + dur * 0.75);
       g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-
-      const oscs = [];
-      midiNotes.forEach((m, idx) => {
-        const osc = this.ctx.createOscillator();
-        osc.type = idx % 2 === 0 ? 'sawtooth' : 'triangle';
-        osc.frequency.setValueAtTime(mtof(m), t);
-        osc.detune.setValueAtTime((idx - 1.5) * 5, t);
-        osc.connect(flt);
-        osc.start(t);
-        osc.stop(t + dur + 0.04);
-        oscs.push(osc);
+      const srcs = [];
+      midis.forEach((m, i) => {
+        [-9, 9].forEach((det) => {
+          const o = ctx.createOscillator();
+          o.type = 'sawtooth';
+          o.frequency.setValueAtTime(mtof(m), t);
+          o.detune.setValueAtTime(det + (i - 1.5) * 2, t);
+          o.connect(flt);
+          o.start(t);
+          o.stop(t + dur + 0.05);
+          srcs.push(o);
+        });
       });
-
+      srcs[0].onended = () => { try { g.disconnect(); } catch (_) {} };
       flt.connect(g);
-      this._connectOutput(g, this.musicGain, 0, 0.42);
-      const entry = { oscs, gain: g, end: t + dur + 0.05 };
-      this._activePads.push(entry);
-      if (this._activePads.length > 6) {
-        this._activePads = this._activePads.filter((p) => p.end > this._now());
+      g.connect(this.padBus);
+      const s = ctx.createGain(); s.gain.value = 0.32; g.connect(s); s.connect(this.reverbIn);
+      this._trackLong(srcs, g, t + dur);
+    },
+
+    _lead(t, midi, dur, vol, o = {}) {
+      const ctx = this.ctx;
+      const f = mtof(midi);
+      const d = Math.max(0.06, dur);
+      const o1 = ctx.createOscillator();
+      const o2 = ctx.createOscillator();
+      const flt = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      o1.type = o.wave || 'sawtooth';
+      o2.type = o.wave2 || 'square';
+      o1.frequency.setValueAtTime(f, t);
+      o2.frequency.setValueAtTime(f, t);
+      o1.detune.setValueAtTime(-6, t);
+      o2.detune.setValueAtTime(7, t);
+      if (o.slideFrom) {
+        o1.frequency.setValueAtTime(mtof(o.slideFrom), t);
+        o1.frequency.exponentialRampToValueAtTime(f, t + 0.05);
+        o2.frequency.setValueAtTime(mtof(o.slideFrom), t);
+        o2.frequency.exponentialRampToValueAtTime(f, t + 0.05);
+      }
+      flt.type = 'lowpass';
+      flt.Q.value = 2.2;
+      const cut = o.cutoff || 3200;
+      flt.frequency.setValueAtTime(cut, t);
+      flt.frequency.exponentialRampToValueAtTime(Math.max(400, f * 2.2), t + Math.min(d, 0.35));
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(vol, t + 0.012);
+      g.gain.setValueAtTime(vol * 0.8, t + d * 0.7);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      const mixO2 = ctx.createGain();
+      mixO2.gain.value = 0.5;
+      o1.connect(flt);
+      o2.connect(mixO2);
+      mixO2.connect(flt);
+      flt.connect(g);
+      const srcs = [o1, o2];
+      if (d > 0.3) {
+        // delayed vibrato on long notes
+        const lfo = ctx.createOscillator();
+        const lg = ctx.createGain();
+        lfo.frequency.value = 5.5;
+        lg.gain.setValueAtTime(0, t);
+        lg.gain.linearRampToValueAtTime(14, t + Math.min(0.4, d * 0.6));
+        lfo.connect(lg);
+        lg.connect(o1.detune);
+        lg.connect(o2.detune);
+        lfo.start(t);
+        lfo.stop(t + d + 0.03);
+        srcs.push(lfo);
+      }
+      this._route(g, this.leadBus, o.pan || 0, o.rev != null ? o.rev : 0.25, o.dly != null ? o.dly : 0.28);
+      srcs.forEach((s) => { s.start(t); s.stop(t + d + 0.03); });
+      o1.onended = () => { try { g.disconnect(); } catch (_) {} };
+      if (d > 0.6) this._trackLong(srcs, g, t + d);
+    },
+
+    // Two-operator FM bell (cheap, glassy)
+    _bell(t, midi, dur, vol, pan = 0, ratio = 3.5, dly = 0.35) {
+      const ctx = this.ctx;
+      const f = mtof(midi);
+      const car = ctx.createOscillator();
+      const mod = ctx.createOscillator();
+      const mg = ctx.createGain();
+      const g = ctx.createGain();
+      car.type = 'sine';
+      mod.type = 'sine';
+      car.frequency.setValueAtTime(f, t);
+      mod.frequency.setValueAtTime(f * ratio, t);
+      mg.gain.setValueAtTime(f * 2.2, t);
+      mg.gain.exponentialRampToValueAtTime(Math.max(1, f * 0.05), t + dur * 0.6);
+      mod.connect(mg);
+      mg.connect(car.frequency);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(vol, t + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      car.connect(g);
+      this._route(g, this.leadBus, pan, 0.3, dly);
+      car.start(t); mod.start(t);
+      car.stop(t + dur + 0.03); mod.stop(t + dur + 0.03);
+      car.onended = () => { try { g.disconnect(); } catch (_) {} };
+    },
+
+    _pluck(t, midi, dur, vol, pan = 0, wave = 'square', cutoff = 2600, dly = 0.3) {
+      this._osc(t, wave, mtof(midi), mtof(midi), dur, vol, this.leadBus, {
+        pan, dly, rev: 0.12, attack: 0.003, filter: { type: 'lowpass', f0: cutoff, f1: 400, q: 3 },
+      });
+    },
+
+    _stab(t, rootMidi, q, dur, vol) {
+      const ivs = QUAL[q] || QUAL.min;
+      ivs.slice(0, 3).forEach((iv, i) => {
+        const f = mtof(rootMidi + 24 + iv);
+        this._osc(t, 'sawtooth', f, f, dur, vol, this.leadBus, {
+          pan: (i - 1) * 0.35, rev: 0.22, attack: 0.006, detune: (i - 1) * 6, filter: { f0: 4200, f1: 500, q: 2.5 },
+        });
+      });
+    },
+
+    // ==================== COMPOSITION ENGINE ====================
+    _resetSong() {
+      this.song = {
+        s16: 0, bar: -1, secIdx: 0, secBar: -1, cycle: 0, level: 0,
+        bpm: (TRACKS[this.musicMode] && TRACKS[this.musicMode].bpm) || 120,
+        chord: [0, 'min'], phrase: null, key: 38, prevMidi: 0, marchStep: 0,
+      };
+    },
+
+    _chordTones(key, chord) {
+      const ivs = QUAL[chord[1]] || QUAL.min;
+      return ivs.map((iv) => key + chord[0] + iv);
+    },
+
+    // Builds a melody for a whole section: motif-based phrases snapped to the chord changes.
+    _genPhrase(trk, sec, key, seed) {
+      const rng = mulberry32(seed);
+      const dens = sec.breakdown ? 'sparse' : (trk.lead.dens || 'mid');
+      const pool = RHY[dens];
+      const lo = trk.lead.lo + (key - trk.key);
+      const hi = trk.lead.hi + (key - trk.key);
+      const scale = trk.scale;
+      const inScale = (m) => scale.includes(((m - key) % 12 + 12) % 12);
+      const stepScale = (m, n) => {
+        let x = m;
+        const dir = n > 0 ? 1 : -1;
+        let k = Math.abs(n);
+        while (k > 0) { x += dir; if (inScale(x)) k--; }
+        return x;
+      };
+      const rA = pool[Math.floor(rng() * pool.length)];
+      const rB = pool[Math.floor(rng() * pool.length)];
+      const rC = RHY.cad[Math.floor(rng() * RHY.cad.length)];
+      const motifSeeds = [Math.floor(rng() * 1e9), Math.floor(rng() * 1e9)];
+      let cur = Math.round((lo + hi) / 2);
+      const bars = [];
+      for (let b = 0; b < sec.bars; b++) {
+        const inPhrase = b % 4;
+        const rhythm = inPhrase === 3 ? rC : (inPhrase === 1 ? rB : rA);
+        // bars 0 and 2 of each phrase share the same motif decisions -> recognizable repetition
+        const mr = mulberry32(inPhrase === 1 ? motifSeeds[1] + b : motifSeeds[0] + (b >= 4 ? 7 : 0));
+        const chord = sec.chords[b % sec.chords.length];
+        const tones = this._chordTones(key, chord).map((x) => ((x % 12) + 12) % 12);
+        let dirBias = mr() < 0.5 ? -1 : 1;
+        const notes = [];
+        rhythm.forEach(([s, len], idx) => {
+          const strong = s === 0 || s === 8 || idx === 0;
+          if (strong) {
+            // nearest chord tone around cur (+/- small leap)
+            const target = cur + Math.round((mr() - 0.5) * 7);
+            let best = cur, bd = 99;
+            for (let m = lo; m <= hi; m++) {
+              if (!tones.includes(((m % 12) + 12) % 12)) continue;
+              const dd = Math.abs(m - target);
+              if (dd < bd) { bd = dd; best = m; }
+            }
+            cur = best;
+          } else {
+            if (mr() < 0.4) dirBias = -dirBias;
+            const size = mr() < 0.72 ? 1 : 2;
+            let nx = stepScale(cur, dirBias * size);
+            if (nx > hi || nx < lo) { dirBias = -dirBias; nx = stepScale(cur, dirBias * size); }
+            cur = clamp(nx, lo, hi);
+          }
+          // final note of the phrase resolves to the chord root/third
+          if (inPhrase === 3 && idx === rhythm.length - 1) {
+            let best = cur, bd = 99;
+            const res = [tones[0], tones[1]];
+            for (let m = lo; m <= hi; m++) {
+              if (!res.includes(((m % 12) + 12) % 12)) continue;
+              const dd = Math.abs(m - cur);
+              if (dd < bd) { bd = dd; best = m; }
+            }
+            cur = best;
+          }
+          notes.push({ s, len, m: cur });
+        });
+        bars.push(notes);
+      }
+      return bars;
+    },
+
+    _bpmFor(mode) {
+      const S = this.song;
+      const trk = TRACKS[mode];
+      if (mode === 'battle') return Math.min(158, trk.bpm + S.level * 6 + (this.sector - 1) * 1.2);
+      if (mode === 'boss') return trk.bpm + (this.bossPhase - 1) * 6 + S.level * 2;
+      return trk.bpm;
+    },
+
+    _keyFor(mode) {
+      const trk = TRACKS[mode];
+      if (mode === 'battle') return trk.key + SECTOR_TRANSPOSE[(this.sector - 1) % 10];
+      if (mode === 'boss') return trk.key + (this.bossPhase >= 3 ? 1 : 0);
+      return trk.key;
+    },
+
+    _onBar(trk, t, stepDur) {
+      const S = this.song;
+      S.bar++;
+      S.secBar++;
+      let secName = trk.order[S.secIdx % trk.order.length];
+      let sec = trk.sections[secName];
+      const newSection = S.secBar === 0 || S.secBar >= sec.bars;
+      if (S.secBar >= sec.bars) {
+        S.secBar = 0;
+        S.secIdx++;
+        if (S.secIdx % trk.order.length === 0) S.cycle++;
+        secName = trk.order[S.secIdx % trk.order.length];
+        sec = trk.sections[secName];
+      }
+      // Quantized intensity -> layer level (only changes on bar lines so layers never stutter)
+      const it = this._smoothInt;
+      const lv = it < 0.22 ? 0 : it < 0.48 ? 1 : it < 0.74 ? 2 : 3;
+      S.level = this.musicMode === 'battle' || this.musicMode === 'boss' ? lv : 1;
+      if (this.musicMode === 'boss') S.level = Math.max(S.level, this.bossPhase - 1);
+      S.bpm = this._bpmFor(this.musicMode);
+      const key = this._keyFor(this.musicMode);
+      if (newSection || key !== S.key || !S.phrase) {
+        S.key = key;
+        const seed = (this.musicMode.length * 7919) + S.secIdx % trk.order.length * 104729 + (S.cycle % 3) * 1299709 + key * 31;
+        S.phrase = this._genPhrase(trk, sec, key, seed);
+        S.newSection = true;
+      } else {
+        S.newSection = false;
+      }
+      S.sec = sec;
+      S.secName = secName;
+      S.chord = sec.chords[S.secBar % sec.chords.length];
+      S.lastBar = S.secBar === sec.bars - 1;
+      // delay time follows tempo (dotted eighth)
+      if (this._delayL) {
+        const dt = clamp((60 / S.bpm) * 0.75, 0.12, 1.2);
+        this._delayL.delayTime.setTargetAtTime(dt, t, 0.05);
+        this._delayR.delayTime.setTargetAtTime(dt, t, 0.05);
       }
     },
 
-    // ==================== LOOKAHEAD MULTI-MODE SEQUENCER ====================
-    _getStepDuration() {
-      const inten = clamp(this.intensity || 0, 0, 1);
-      switch (this.musicMode) {
-        case 'hangar':  return 60 / 88 / 4;                  // ~0.170s (16th @ 88 BPM)
-        case 'cinema':  return 60 / 96 / 4;                  // ~0.156s (16th @ 96 BPM)
-        case 'battle':  return 60 / (124 + inten * 30) / 4;  // 124 -> 154 BPM
-        case 'boss':    return 60 / (145 + inten * 15) / 4;  // 145 -> 160 BPM
-        case 'victory': return 60 / 112 / 4;                 // ~0.134s (16th @ 112 BPM)
-        default:        return 0.15;
+    _scheduleStep(t, stepDur) {
+      const trk = TRACKS[this.musicMode];
+      if (!trk) return;
+      const S = this.song;
+      if (S.s16 === 0) this._onBar(trk, t, stepDur);
+      const fn = this['_trk_' + this.musicMode];
+      if (fn) fn.call(this, S, t, stepDur, trk);
+      // melody (shared)
+      if (S.phrase && this._leadOn(S)) {
+        const bar = S.phrase[S.secBar % S.phrase.length];
+        if (bar) {
+          for (const n of bar) {
+            if (n.s === S.s16) this._playLeadNote(S, t, n, stepDur);
+          }
+        }
+      }
+      S.s16 = (S.s16 + 1) % 16;
+    },
+
+    _leadOn(S) {
+      const m = this.musicMode;
+      if (m === 'battle') return (S.sec && S.sec.lead && S.level >= 1) || S.level >= 2;
+      if (m === 'boss') return true;
+      if (m === 'cinema') return false;
+      return !!(S.sec && S.sec.lead);
+    },
+
+    _playLeadNote(S, t, n, sd) {
+      const m = this.musicMode;
+      const dur = n.len * sd * 0.95;
+      if (m === 'hangar') {
+        this._bell(t, n.m, Math.max(0.5, dur * 1.6), 0.07, 0.15);
+        this._lead(t, n.m - 12, dur, 0.03, { wave: 'triangle', wave2: 'sine', cutoff: 1800, pan: -0.1 });
+      } else if (m === 'gameover') {
+        this._bell(t, n.m, Math.max(1.0, dur * 1.2), 0.07, 0, 2.0, 0.4);
+      } else if (m === 'victory') {
+        this._lead(t, n.m, dur, 0.075, { cutoff: 3600, pan: 0.05 });
+        this._bell(t, n.m + 12, Math.max(0.4, dur), 0.03, -0.2);
+      } else if (m === 'boss') {
+        this._lead(t, n.m, dur, 0.075, { cutoff: 3800 + S.level * 300, pan: -0.05, wave2: 'sawtooth' });
+        if (this.bossPhase >= 3 || S.level >= 3) this._lead(t, n.m + 12, dur, 0.03, { cutoff: 4200, pan: 0.25, dly: 0.2 });
+      } else {
+        this._lead(t, n.m, dur, 0.07, { cutoff: 3000 + S.level * 350, pan: 0.05 });
+        if (S.level >= 3) this._lead(t, n.m + 12, dur, 0.028, { cutoff: 4000, pan: -0.3, wave: 'square', wave2: 'square' });
       }
     },
 
-    _scheduleStep(step, t, stepDur) {
-      const mode = this.musicMode;
-      const inten = clamp(this.intensity || 0, 0, 1);
-
-      if (mode === 'hangar') {
-        const s64 = step % 64;
-        const bar = Math.floor(s64 / 16);
-        const beatStep = s64 % 16;
-        const chord = HANGAR_BARS[bar];
-
-        // Pad chord at start of bar (and resolution at bar 3 step 8)
-        if (beatStep === 0) {
-          const padDur = chord.padLate ? stepDur * 8.2 : stepDur * 16.2;
-          this._playPadChord(t, chord.pad, padDur, 0.06, 980);
-          this._playSynthBass(t, mtof(chord.bass), stepDur * 14, 0.14, 340, 'triangle');
-        } else if (beatStep === 8 && chord.padLate) {
-          this._playPadChord(t, chord.padLate, stepDur * 8.2, 0.06, 1080);
-        }
-
-        // Glassy stereo arpeggio every 8th note
-        if (s64 % 2 === 0) {
-          const noteMidi = chord.arp[(beatStep >> 1) % chord.arp.length];
-          const pan = ((s64 >> 1) % 2 === 0 ? -0.28 : 0.28);
-          this._toneAt(t, 'triangle', mtof(noteMidi), mtof(noteMidi), stepDur * 1.9, 0.075, this.musicGain, pan, 0.38);
-          this._toneAt(t, 'sine', mtof(noteMidi + 12), mtof(noteMidi + 12), stepDur * 1.3, 0.024, this.musicGain, pan, 0.35);
-        }
-
-        // Gentle atmospheric pulse kick & shimmer hat
-        if (beatStep % 4 === 0) {
-          this._playKick(t, 0.16, 105, 36);
-        }
-        if (beatStep % 4 === 2) {
-          this._playHat(t, 0.035, false);
-        }
-      } else if (mode === 'cinema') {
-        const s32 = step % 32;
-        const s16 = step % 16;
-
-        // Deep brass tension drone every 16 steps
-        if (s32 === 0) {
-          this._playPadChord(t, [38, 45, 53], stepDur * 16.2, 0.09, 720);
-        } else if (s32 === 16) {
-          this._playPadChord(t, [46, 53, 62], stepDur * 16.2, 0.09, 780);
-        }
-
-        // Tactical 8th-note telemetry bass pulse
-        if (s32 % 2 === 0) {
-          const bassMidi = CINEMA_PULSE[(s32 >> 1) % CINEMA_PULSE.length];
-          this._playSynthBass(t, mtof(bassMidi), stepDur * 1.35, 0.17, 460, 'sawtooth');
-        }
-
-        // Taiko/Sub impacts
-        if (s16 === 0 || s16 === 6 || s16 === 12) {
-          this._playKick(t, s16 === 0 ? 0.28 : 0.19, 98, 32);
-        }
-
-        // Orbital Radar / Sonar Pings
-        if (CINEMA_PINGS[s32] !== undefined) {
-          const pingF = mtof(CINEMA_PINGS[s32]);
-          const pan = s32 < 16 ? -0.45 : 0.45;
-          this._toneAt(t, 'sine', pingF, pingF, stepDur * 4.5, 0.08, this.musicGain, pan, 0.48);
-        }
-      } else if (mode === 'battle') {
-        const s64 = step % 64;
-        const bar = Math.floor(s64 / 16);
-        const s16 = s64 % 16;
-        const barCfg = BATTLE_BARS[bar];
-
-        // 1. Drums: 4-on-floor kick, driving backbeat snare, crisp hats
-        if (s16 % 4 === 0 || (bar % 2 === 1 && s16 === 14)) {
-          this._playKick(t, 0.34, 134, 33);
-        }
-        if (s16 === 4 || s16 === 12 || (s64 === 63)) {
-          this._playSnare(t, s64 === 63 ? 0.14 : 0.19);
-        }
-        if (s16 % 2 === 0 || inten > 0.45) {
-          const open = s16 % 4 === 2;
-          this._playHat(t, open ? 0.068 : 0.036, open && inten > 0.3);
-        }
-
-        // 2. Classic Space Invaders 4-note descending sub-bass pulse (accelerates with BPM/intensity)
-        if (s16 % 4 === 0) {
-          const invF = INVADER_PULSE_HZ[this.marchStep % 4];
-          this._playSynthBass(t, invF, stepDur * 2.7, 0.23, 620 + inten * 380, 'sawtooth');
-          this.marchStep++;
-        } else if (s16 % 4 === 2) {
-          // Off-beat synthwave octave bass glue
-          const root = mtof(barCfg.bass + 12);
-          this._playSynthBass(t, root, stepDur * 1.4, 0.12, 820, 'sawtooth');
-        }
-
-        // 3. Driving Synth Arpeggio
-        if (s16 % 2 === 0 || inten > 0.35) {
-          const arpMidi = barCfg.arp[s16 % 4];
-          const pan = (s16 % 2 === 0 ? -0.24 : 0.24);
-          this._toneAt(t, 'triangle', mtof(arpMidi), mtof(arpMidi), stepDur * 1.1, 0.072, this.musicGain, pan, 0.24);
-        }
-
-        // 4. 64-Step Heroic Dual-Sawtooth Lead Melody
-        const mel = BATTLE_MELODY[s64];
-        if (mel) {
-          this._playSynthLead(t, mtof(mel[0]), stepDur * mel[1], 0.115, 0.08, 2850, 0.32);
-        }
-      } else if (mode === 'boss') {
-        const s64 = step % 64;
-        const bar = Math.floor(s64 / 16);
-        const s16 = s64 % 16;
-
-        // Boss bar root progression (C minor / Phrygian)
-        let rootMidi = 36; // C2
-        if (bar === 1) rootMidi = s16 < 8 ? 44 : 46; // Ab2 -> Bb2
-        else if (bar === 2) rootMidi = s16 < 8 ? 41 : 43; // F2 -> G2
-        else if (bar === 3) rootMidi = s16 < 8 ? 37 : 43; // Db2 -> G2
-
-        // 1. Double-time Industrial Drums
-        if (BOSS_KICKS.has(s16) || s64 >= 60) {
-          this._playKick(t, 0.36, 142, 32);
-        }
-        if (s16 === 4 || s16 === 12 || s64 === 62) {
-          this._playSnare(t, 0.23);
-        }
-        this._playHat(t, s16 % 2 === 1 ? 0.07 : 0.038, s16 === 10);
-
-        // 2. Relentless 16th-Note Octave Bass
-        const bassMidi = s16 % 2 === 0 ? rootMidi : rootMidi + 12;
-        this._playSynthBass(t, mtof(bassMidi), stepDur * 0.88, 0.19, 980 + inten * 550, 'sawtooth');
-
-        // 3. Menacing Brass Stabs
-        if (BOSS_STABS.has(s16)) {
-          this._playBrassStab(t, rootMidi, stepDur * 2.2, 0.14);
-        }
-
-        // 4. Urgent Boss Lead Motif
-        const lead = BOSS_LEAD[s64];
-        if (lead) {
-          this._playSynthLead(t, mtof(lead[0]), stepDur * lead[1], 0.125, -0.1, 3400, 0.3);
-        }
-        this.bossStep++;
-      } else if (mode === 'victory') {
-        const s64 = step % 64;
-        const bar = Math.floor(s64 / 16);
-        const s16 = s64 % 16;
-        const vBar = VICTORY_BARS[bar];
-
-        if (s16 === 0) {
-          const padDur = vBar.padLate ? stepDur * 8.2 : stepDur * 16.2;
-          this._playPadChord(t, vBar.pad, padDur, 0.075, 1650);
-          this._playSynthBass(t, mtof(vBar.bass), stepDur * (vBar.bassLate ? 7.5 : 15), 0.15, 520, 'triangle');
-        } else if (s16 === 8 && vBar.padLate) {
-          this._playPadChord(t, vBar.padLate, stepDur * 8.2, 0.075, 1800);
-          if (vBar.bassLate) this._playSynthBass(t, mtof(vBar.bassLate), stepDur * 7.5, 0.15, 540, 'triangle');
-        }
-
-        if (s16 % 2 === 0) {
-          const arpMidi = vBar.arp[(s16 >> 1) % vBar.arp.length];
-          const pan = ((s16 >> 1) % 2 === 0 ? -0.3 : 0.3);
-          this._toneAt(t, 'triangle', mtof(arpMidi), mtof(arpMidi), stepDur * 1.8, 0.075, this.musicGain, pan, 0.36);
-        }
-
-        if (s16 % 4 === 0) this._playKick(t, 0.22, 118, 36);
-        if (s16 === 4 || s16 === 12) this._playSnare(t, 0.12);
-        if (s16 % 2 === 1) this._playHat(t, 0.04, false);
-
-        const vMel = VICTORY_MELODY[s64];
-        if (vMel) {
-          this._playSynthLead(t, mtof(vMel[0]), stepDur * vMel[1], 0.115, 0, 3200, 0.38);
-        }
+    // --- Track: hangar / title / upgrade (calm synthwave) ---
+    _trk_hangar(S, t, sd) {
+      const k = S.key, ch = S.chord, s = S.s16;
+      const tones = this._chordTones(k, ch);
+      if (s === 0) {
+        this._pad(t, tones.slice(0, 4).map((m) => m + 12), sd * 16.3, 0.034, S.secName === 'A' ? 1100 : 1700, 0.6);
+        this._bass(t, k + ch[0], sd * 6, 0.14, 'soft');
       }
+      if (s === 10) this._bass(t, k + ch[0], sd * 5, 0.11, 'soft');
+      // glassy arpeggio (8ths), broken pattern up two octaves
+      if (s % 2 === 0) {
+        const pat = [0, 2, 1, 3, 2, 4, 3, 1];
+        const pool = tones.concat(tones.map((m) => m + 12));
+        const m = pool[pat[(s >> 1) % pat.length] % pool.length] + 24;
+        this._pluck(t, m, sd * 1.8, 0.042, (s >> 1) % 2 ? 0.35 : -0.35, 'triangle', 3200, 0.35);
+      }
+      if (S.secName !== 'A') {
+        if (s % 4 === 0) { this._kick(t, 0.32, 120, 40, 0.3); this._pump(t, 0.35, 0.15); }
+        if (s === 4 || s === 12) this._clap(t, 0.08);
+        if (s % 4 === 2) this._hat(t, 0.05, false, 0.2);
+      } else {
+        if (s === 0 || s === 8) { this._kick(t, 0.24, 110, 40, 0.3); this._pump(t, 0.25, 0.18); }
+        if (s % 4 === 2) this._hat(t, 0.03, false, -0.2);
+      }
+    },
+
+    // --- Track: cinema (tense pulse + taiko + sonar) ---
+    _trk_cinema(S, t, sd) {
+      const k = S.key, ch = S.chord, s = S.s16;
+      const tones = this._chordTones(k, ch);
+      if (s === 0) {
+        this._pad(t, tones.map((m) => m + 12), sd * 16.2, 0.04, 900, 0.8);
+        if (S.newSection && S.bar > 0) this._impact(t, 0.4);
+      }
+      if (s % 2 === 0) this._bass(t, k + ch[0] + (s % 4 === 2 ? 12 : 0), sd * 1.6, 0.13, 'saw');
+      if (s === 0 || s === 6 || s === 10) this._tom(t, s === 0 ? 38 : 45, s === 0 ? 0.42 : 0.28);
+      if (s === 0) this._kick(t, 0.3, 100, 35, 0.5);
+      if (S.secName === 'B' && s % 2 === 1) this._hat(t, 0.025, false, (s % 4 === 1) ? -0.3 : 0.3);
+      if (s === 4 || s === 14) this._bell(t, tones[2] + 36, 1.2, 0.05, s === 4 ? -0.5 : 0.5, 1.4, 0.4);
+      if (S.lastBar && S.secName === 'B' && s === 0) this._riser(t, sd * 16, 0.12);
+    },
+
+    // --- Track: battle (adaptive, 4 layers) ---
+    _trk_battle(S, t, sd) {
+      const k = S.key, ch = S.chord, s = S.s16, L = S.level, sec = S.sec || {};
+      const tones = this._chordTones(k, ch);
+      const brk = !!sec.breakdown;
+      // Drums
+      if (S.newSection && s === 0 && S.bar > 0 && L >= 1) this._crash(t, 0.1);
+      if (brk) {
+        if (s === 0 || (s === 8 && L >= 2)) { this._kick(t, 0.5); this._pump(t, 0.5); }
+        if (L >= 1 && s === 12) this._snare(t, 0.16, 0.3);
+      } else {
+        const kickHit = s % 4 === 0 || (L >= 2 && s === 14 && S.bar % 2 === 1) || (L >= 3 && s === 10 && S.bar % 4 === 3);
+        if (kickHit) { this._kick(t, 0.55); this._pump(t, 0.5); }
+        if (s === 4 || s === 12) { if (L >= 1) this._snare(t, 0.2); else this._clap(t, 0.12); }
+        if (S.lastBar && L >= 1 && s >= 12) this._snare(t, 0.07 + (s - 12) * 0.03, 0.1);
+        if (L >= 3 && S.lastBar && s >= 8 && s % 2 === 0) this._tom(t, 50 - (s - 8), 0.18);
+      }
+      const hatOn = L >= 2 ? true : (L >= 1 ? s % 2 === 0 : s % 4 === 2);
+      if (hatOn && !(brk && L < 2)) {
+        const open = L >= 2 && s % 4 === 2;
+        this._hat(t, open ? 0.06 : (s % 4 === 0 ? 0.05 : 0.035), open, s % 2 ? 0.25 : -0.25);
+      }
+      // Bass
+      if (sec.march && L <= 1 && !brk) {
+        // Classic invader 4-note descending march (homage), transposed to the sector key
+        if (s % 4 === 0) {
+          const march = [0, -2, -3, -5];
+          this._bass(t, k + march[S.marchStep % 4], sd * 3, 0.22, 'saw');
+          S.marchStep++;
+        }
+        if (s % 4 === 2) this._bass(t, k + ch[0] + 12, sd * 1.2, 0.1, 'saw');
+      } else if (brk) {
+        if (s === 0) this._bass(t, k + ch[0], sd * 14, 0.17, 'soft');
+      } else if (L >= 3) {
+        const pat = [0, 0, 12, 0, 0, 12, 0, 7, 0, 0, 12, 0, 0, 12, 7, 12];
+        this._bass(t, k + ch[0] + pat[s], sd * 0.9, 0.17, 'acid');
+      } else {
+        if (s % 2 === 0) this._bass(t, k + ch[0] + (s % 4 === 2 ? 12 : 0), sd * 1.5, 0.17, 'saw');
+      }
+      // Pad
+      if (s === 0) this._pad(t, tones.slice(0, 3).map((m) => m + 12), sd * 16.2, brk ? 0.05 : 0.026, brk ? 2200 : 1500, brk ? 0.5 : 0.2);
+      // Arp (16ths) from level 1
+      if ((L >= 1 || sec.drive) && !brk) {
+        const pool = tones.concat(tones.map((m) => m + 12));
+        const pat = sec.drive ? [0, 1, 2, 3, 4, 3, 2, 1] : [0, 2, 1, 3];
+        if (L >= 2 || s % 2 === 0) {
+          const m = pool[pat[s % pat.length] % pool.length] + 24;
+          this._pluck(t, m, sd * 0.9, 0.035, s % 2 ? 0.3 : -0.3, 'square', 1800 + L * 500, 0.25);
+        }
+      } else if (brk && s % 2 === 0) {
+        const pool = tones.concat(tones.map((m) => m + 12));
+        this._bell(t, pool[(s >> 1) % pool.length] + 24, 0.6, 0.04, (s >> 1) % 2 ? 0.4 : -0.4);
+      }
+    },
+
+    // --- Track: boss (driving, phrygian, phase-reactive) ---
+    _trk_boss(S, t, sd) {
+      const k = S.key, ch = S.chord, s = S.s16, L = S.level;
+      const ph = this.bossPhase;
+      if (S.newSection && s === 0 && S.bar > 0) this._crash(t, 0.12);
+      const kp = ph >= 2 ? [0, 3, 6, 8, 10, 12, 14] : [0, 3, 6, 8, 11, 14];
+      if (kp.includes(s)) { this._kick(t, 0.55, 160, 40, 0.28); this._pump(t, 0.4, 0.09); }
+      if (s === 4 || s === 12) this._snare(t, 0.22);
+      if (ph >= 3 && S.lastBar && s >= 8) this._snare(t, 0.08 + (s - 8) * 0.02, 0.1);
+      this._hat(t, s % 2 ? 0.045 : 0.03, s % 8 === 6, s % 2 ? 0.2 : -0.2);
+      // relentless 16th octave bass
+      const bm = k + ch[0] + (s % 2 === 1 ? 12 : 0);
+      this._bass(t, bm, sd * 0.85, 0.16, ph >= 2 ? 'acid' : 'saw');
+      if ([0, 6, 10].includes(s)) this._stab(t, k + ch[0], ch[1], sd * 2.2, 0.035);
+      if (s === 0) {
+        const tones = this._chordTones(k, ch);
+        this._pad(t, tones.map((m) => m + 12), sd * 16.2, 0.025 + (ph - 1) * 0.008, 1200 + ph * 400, 0.15);
+      }
+      if (L >= 2 && s % 4 === 2) this._tom(t, 43 + (s % 8), 0.12);
+    },
+
+    // --- Track: victory (heroic major) ---
+    _trk_victory(S, t, sd) {
+      const k = S.key, ch = S.chord, s = S.s16;
+      const tones = this._chordTones(k, ch);
+      if (s === 0) {
+        this._pad(t, tones.slice(0, 4).map((m) => m + 12), sd * 16.2, 0.035, 2200, 0.3);
+        if (S.newSection && S.bar > 0) this._crash(t, 0.1);
+      }
+      if (s % 4 === 0) { this._kick(t, 0.42, 130, 42, 0.3); this._pump(t, 0.35); }
+      if (s === 4 || s === 12) this._clap(t, 0.11);
+      if (s % 2 === 1) this._hat(t, 0.035, s % 4 === 3, s % 4 === 1 ? -0.2 : 0.2);
+      if (s % 2 === 0) this._bass(t, k + ch[0] + (s % 8 === 4 ? 12 : 0), sd * 1.7, 0.15, 'saw');
+      if (s % 2 === 0) {
+        const pool = tones.concat(tones.map((m) => m + 12));
+        this._bell(t, pool[(s >> 1) % pool.length] + 24, 0.5, 0.032, (s >> 1) % 2 ? 0.35 : -0.35);
+      }
+    },
+
+    // --- Track: game over (slow, somber) ---
+    _trk_gameover(S, t, sd) {
+      const k = S.key, ch = S.chord, s = S.s16;
+      const tones = this._chordTones(k, ch);
+      if (s === 0) {
+        this._pad(t, tones.slice(0, 4).map((m) => m + 12), sd * 16.4, 0.045, 800, 1.2);
+        this._bass(t, k + ch[0], sd * 15, 0.15, 'soft');
+      }
+      if (s === 8) this._bell(t, tones[1] + 24, 2.2, 0.03, 0.3, 1.0, 0.45);
     },
 
     _scheduleMusic() {
       if (!this.ctx || this.muted || this.ctx.state !== 'running') return;
-      if (this.musicMode === 'idle') return;
-      if (NV.Engine && NV.Engine.mode === 'paused') return;
-
+      if (!TRACKS[this.musicMode]) return;
       const now = this._now();
-      // Recover cleanly after tab backgrounding or long silence
-      if (this.nextNoteTime < now - 0.15 || now - this.nextNoteTime > 0.4) {
-        this.nextNoteTime = now + 0.015;
-      }
-
-      const lookahead = 0.12;
+      if (this.nextNoteTime < now - 0.2 || this.nextNoteTime > now + 1.0) this.nextNoteTime = now + 0.03;
+      const lookahead = 0.16;
       let guard = 0;
-      while (this.nextNoteTime < now + lookahead && guard++ < 8) {
-        const stepDur = this._getStepDuration();
-        this._scheduleStep(this.seqStep, this.nextNoteTime, stepDur);
-        this.nextNoteTime += stepDur;
-        this.seqStep++;
+      while (this.nextNoteTime < now + lookahead && guard++ < 12) {
+        const stepDur = 60 / Math.max(40, this.song.bpm || TRACKS[this.musicMode].bpm) / 4;
+        this._scheduleStep(this.nextNoteTime, stepDur);
+        // bpm may have been updated on the bar line inside _scheduleStep
+        this.nextNoteTime += 60 / Math.max(40, this.song.bpm) / 4;
       }
     },
 
-    // Called every frame with current intensity (0..1, 1 = last few invaders / critical boss phase)
-    updateMusic(dt, intensity = 0) {
+    // Called every frame. intensity 0..1 (danger, progress, combo); opts: {bossPhase, sector}
+    updateMusic(dt, intensity = 0, opts) {
       this.intensity = clamp(Number(intensity) || 0, 0, 1);
-      if (!this.ctx) this.init();
-      if (!this.ctx || this.muted) return;
-      if (this.ctx.state !== 'running') return;
+      if (opts) this.setMusicParams(opts);
+      const k = 1 - Math.exp(-(dt || 0.016) * (this.intensity > this._smoothInt ? 2.5 : 0.6));
+      this._smoothInt += (this.intensity - this._smoothInt) * k;
+      if (!this.ctx || this.muted || this.ctx.state !== 'running') return;
       this._scheduleMusic();
     },
   };
 
   NV.Audio = Audio;
 
-  // Eagerly bind unlock listeners and pre-initialize audio context on load
-  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-    Audio._bindUnlockListeners();
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => Audio.init(), { once: true });
-    } else {
-      Audio.init();
-    }
-  }
+  // Only bind gesture listeners on load. The AudioContext is created lazily inside the first real user gesture,
+  // which is what Safari (especially inside the portal iframe) requires.
+  if (typeof window !== 'undefined') Audio._bindUnlockListeners();
 })(window.NV = window.NV || {});
 
 
