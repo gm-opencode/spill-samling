@@ -41,10 +41,11 @@ This file can't change the main session's own model or effort. The user sets tho
 ## Adding or renaming a game
 
 A game's slug (e.g. `nova-vanguard`) is hard-coded in several places that must stay in sync:
-1. `app.js`: the `GAMES` map (title, file path, controls hint) and the `GAME_KEYS` order, which sets both the arrow-key order and the `1`–`N` hotkeys. The hotkey check in the `keydown` handler lists `'1'`–`'4'` explicitly.
+1. `app.js`: the `GAMES` map (title, file path, controls hint) and the `GAME_KEYS` order, which sets the arrow-key order, the spotlight rotation order, and the `1`–`9` hotkeys (the `keydown` handler maps any digit to its `GAME_KEYS` index).
 2. `index.html`:
    - an `.ambient-layer` with `data-ambient`
-   - a `.game-card` with `data-game`, `data-launch`, and `data-recent-label`
+   - a `.game-card` with `data-game`, `data-genres` (space-separated keys matched by the `data-filter` chips; add a chip for a new genre), a `--game-accent` colour in its `style`, `data-launch` on the cover and Play links, a `data-details` button, and `data-recent-label`. The spotlight, its rail, the details dialog, the "Continue playing" row, and search all read their copy from this card's `.card-genre`, `.card-subtitle`, `.card-description`, `.card-tags`, `.card-specs`, and cover `<img>`, so keep those filled in.
    - a theater switcher button with `data-switch`
-   - the `<meta>` description and Open Graph text, which name every game
-3. `assets/<slug>.jpg` for the cover art, used by both the card and the ambient backdrop.
+   - the footer quick-launch keys and the library keyboard hint (`1`–`N`)
+   - the `<meta>` description and Open Graph/Twitter text, which name every game
+3. `assets/<slug>.jpg` for the cover art (1280×714), used by the card, spotlight, theater loader, and ambient backdrop.
