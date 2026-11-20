@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OpenGam.es</title>
-  <meta name="description" content="OpenGam.es — Play Trollguard, SAP Fighter 2, and Nordrally instantly in your browser. Zero downloads, pure HTML5 gaming." />
+  <meta name="description" content="OpenGam.es — Play Trollguard, SAP Fighter 2, Nordrally, and Nova Vanguard instantly in your browser. Zero downloads, pure HTML5 gaming." />
 
   <!-- Open Graph -->
   <meta property="og:title" content="OpenGam.es" />
-  <meta property="og:description" content="Instant-play HTML5 browser games: Trollguard, SAP Fighter 2, and Nordrally. Pick a title and press play." />
+  <meta property="og:description" content="Instant-play HTML5 browser games: Trollguard, SAP Fighter 2, Nordrally, and Nova Vanguard. Pick a title and press play." />
   <meta property="og:type" content="website" />
   <meta property="og:image" content="./assets/trollguard.jpg" />
 
@@ -39,6 +39,11 @@
       class="ambient-layer"
       data-ambient="nordrally"
       style="background-image: url('./assets/nordrally.jpg');"
+    ></div>
+    <div
+      class="ambient-layer"
+      data-ambient="nova-vanguard"
+      style="background-image: url('./assets/nova-vanguard.jpg');"
     ></div>
     <div class="ambient-vignette"></div>
   </div>
@@ -93,13 +98,13 @@
           <p class="hero-kicker">Instant Browser Arcade</p>
           <h1 class="hero-title" id="portal-heading">OpenGam.es</h1>
           <p class="hero-subtitle">
-            Handcrafted single-file HTML5 games built for instant play. Defend Norwegian fjords from trolls, brawl enterprise tech rivals, or drift armored vehicles through alpine passes.
+            Handcrafted single-file HTML5 games built for instant play. Defend Norwegian fjords from trolls, brawl enterprise tech rivals, drift armored vehicles through alpine passes, or intercept an alien armada in 3D orbit.
           </p>
         </div>
 
         <div class="hero-telemetry" aria-label="Platform highlights">
           <div class="telemetry-stat">
-            <span class="stat-value">03</span>
+            <span class="stat-value">04</span>
             <span class="stat-label">Playable Titles</span>
           </div>
           <div class="telemetry-divider" aria-hidden="true"></div>
@@ -395,6 +400,94 @@
             </div>
           </article>
 
+          <!-- 04: NOVA VANGUARD -->
+          <article class="game-card" id="card-nova-vanguard" data-game="nova-vanguard" tabindex="0">
+            <div class="card-media">
+              <a
+                href="./games/Nova_Vanguard.html"
+                class="card-media-link"
+                data-launch="nova-vanguard"
+                aria-label="Play Nova Vanguard"
+              >
+                <img
+                  src="./assets/nova-vanguard.jpg"
+                  alt="Nova Vanguard cover artwork showing an angular titanium starfighter firing twin cyan plasma cannons at an alien dreadnought armada descending over sunlit Earth"
+                  class="card-image"
+                  width="1280"
+                  height="714"
+                  loading="eager"
+                />
+              </a>
+
+              <div class="card-hud-top">
+                <span class="card-slot">04</span>
+                <span class="card-recent" data-recent-label="nova-vanguard">Played</span>
+              </div>
+
+              <div class="card-hud-bottom">
+                <span class="card-engine">WebGL 3D &bull; Arcade Shooter</span>
+                <span class="card-play-badge" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M7 4.5v15l13-7.5L7 4.5z"/>
+                  </svg>
+                </span>
+              </div>
+            </div>
+
+            <div class="card-body">
+              <p class="card-genre">3D Space Invaders Campaign</p>
+              <div class="card-header-row">
+                <h3 class="card-title">Nova Vanguard</h3>
+              </div>
+              <p class="card-subtitle">Orbital Defense Protocol</p>
+              <p class="card-description">
+                Pilot three distinct starfighters across a 10-stage cinematic deep-space campaign—from Earth orbit to Dreadnought Vex-Karn and the Sovereign Overmind.
+              </p>
+
+              <ul class="card-specs">
+                <li>
+                  <span class="spec-key">Starfighters</span>
+                  <span class="spec-val">Valkyrie, Aegis &amp; Phantom</span>
+                </li>
+                <li>
+                  <span class="spec-key">Campaign</span>
+                  <span class="spec-val">10 Stages &bull; Cinematics &bull; 2 Bosses</span>
+                </li>
+                <li>
+                  <span class="spec-key">Controls</span>
+                  <span class="spec-val">A/D or Arrows / Space / Shift / Q</span>
+                </li>
+              </ul>
+
+              <div class="card-actions">
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  id="play-nova-vanguard"
+                  data-launch="nova-vanguard"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M6 4.5v15l13-7.5L6 4.5z"/>
+                  </svg>
+                  <span>Play</span>
+                </button>
+                <a
+                  href="./games/Nova_Vanguard.html"
+                  class="btn btn-secondary"
+                  id="direct-nova-vanguard"
+                  title="Open Nova Vanguard directly as a standalone page"
+                  aria-label="Open Nova Vanguard directly"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </a>
+              </div>
+            </div>
+          </article>
+
         </div>
       </div>
     </section>
@@ -404,7 +497,7 @@
     <div class="container footer-inner">
       <span>Created by Giancarlo &mdash; Hosted on GitHub Pages. Keyboard recommended for best experience.</span>
       <div class="footer-hints">
-        <span>Quick launch: <kbd class="kbd">1</kbd> <kbd class="kbd">2</kbd> <kbd class="kbd">3</kbd></span>
+        <span>Quick launch: <kbd class="kbd">1</kbd> <kbd class="kbd">2</kbd> <kbd class="kbd">3</kbd> <kbd class="kbd">4</kbd></span>
       </div>
     </div>
   </footer>
@@ -438,6 +531,7 @@
         <button type="button" class="switcher-btn" id="switch-trollguard" data-switch="trollguard" aria-pressed="false">Trollguard</button>
         <button type="button" class="switcher-btn" id="switch-sap-fighter" data-switch="sap-fighter" aria-pressed="false">SAP Fighter 2</button>
         <button type="button" class="switcher-btn" id="switch-nordrally" data-switch="nordrally" aria-pressed="false">Nordrally</button>
+        <button type="button" class="switcher-btn" id="switch-nova-vanguard" data-switch="nova-vanguard" aria-pressed="false">Nova Vanguard</button>
       </div>
 
       <div class="theater-right">

@@ -17,9 +17,14 @@
       file: './games/Nordrally.html',
       controls: 'WASD or Arrows / Shift / Space',
     },
+    'nova-vanguard': {
+      title: 'Nova Vanguard',
+      file: './games/Nova_Vanguard.html',
+      controls: 'A/D or Arrows / Space / Shift / Q',
+    },
   };
 
-  const GAME_KEYS = ['trollguard', 'sap-fighter', 'nordrally'];
+  const GAME_KEYS = ['trollguard', 'sap-fighter', 'nordrally', 'nova-vanguard'];
   const STORAGE_SFX_KEY = 'opengames_ui_sfx';
   const STORAGE_PLAYED_KEY = 'opengames_played_history';
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -377,7 +382,7 @@
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
     if (!activeGameId) {
-      if (event.key === '1' || event.key === '2' || event.key === '3') {
+      if (event.key === '1' || event.key === '2' || event.key === '3' || event.key === '4') {
         openGame(GAME_KEYS[Number(event.key) - 1]);
         return;
       }
