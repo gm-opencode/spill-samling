@@ -1675,7 +1675,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   const SECTOR_TRANSPOSE = [0, 2, -2, 3, 0, 5, -3, 1, -1, 0];
 
   // Overall mix calibration (linear gains). Tuned so battle sits around -16 dBFS RMS after the master chain.
-  const MIX = { music: 0.62, sfx: 0.72, makeup: 1.32, out: 0.94 };
+  const MIX = { music: 0.7, sfx: 0.72, makeup: 1.32, out: 0.94 };
 
   function buildSilentWavUri(secs = 0.5, sr = 8000) {
     const n = Math.floor(secs * sr);
@@ -5028,10 +5028,14 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       if (this.currentEnv === envId) return;
       this.currentEnv = envId;
 
-      // Clear previous backdrop meshes
+      // Clear previous backdrop meshes (and free their geometry buffers; textures are shared and kept)
+      const shared = new Set(Object.values(NV.Assets.geos));
+      const geos = new Set();
+      this.backdropGroup.traverse((o) => { if (o.geometry && !shared.has(o.geometry)) geos.add(o.geometry); });
       while (this.backdropGroup.children.length > 0) {
         this.backdropGroup.remove(this.backdropGroup.children[0]);
       }
+      geos.forEach((g) => { try { g.dispose(); } catch (_) {} });
       this.animObjects = [];
       this.lightningLight.intensity = 0;
 
