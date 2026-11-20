@@ -1750,11 +1750,13 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         try { ctx = new AC(); } catch (_e) { return null; }
       }
       this.ctx = ctx;
+      this._createdAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       this._needsRecreate = false;
       this._buildGraph();
       try { ctx.onstatechange = () => this._handleStateChange(); } catch (_) {}
       this._resetSong();
       this._startMusicTicker();
+      if (this.paused) this.setPaused(true); // keep the pause muffle across a rebuild
       return ctx;
     },
 
@@ -1896,9 +1898,13 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         document.addEventListener('visibilitychange', () => {
           if (!this.ctx) return;
           if (document.hidden) {
-            if (this.ctx.state === 'running') {
+            // Suspend while hidden. State changes are async in WebKit, so don't rely on ctx.state here.
+            if (this._unlocked && this.ctx.state !== 'closed') {
               this._autoSuspended = true;
-              try { const p = this.ctx.suspend(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+              try {
+                const p = this.ctx.suspend();
+                this._suspendP = p && p.then ? p.catch(() => {}) : null;
+              } catch (_) { this._suspendP = null; }
             }
           } else {
             this._tryResume();
@@ -1912,13 +1918,21 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     // Resume without a gesture (only valid after an earlier successful unlock, e.g. returning to the tab).
     _tryResume() {
       const ctx = this.ctx;
-      if (!ctx || ctx.state === 'running' || ctx.state === 'closed' || !this._unlocked) return;
+      if (!ctx || ctx.state === 'closed' || !this._unlocked) return;
       if (typeof document !== 'undefined' && document.hidden) return;
+      // After our own suspend() the reported state may still read 'running' (async), so always resume then.
+      if (ctx.state === 'running' && !this._autoSuspended) return;
+      const pending = this._autoSuspended ? this._suspendP : null;
       this._autoSuspended = false;
-      try {
-        const p = ctx.resume();
-        if (p && p.then) p.then(() => this._handleStateChange(), () => {});
-      } catch (_) {}
+      this._suspendP = null;
+      const doResume = () => {
+        if (this.ctx !== ctx || ctx.state === 'closed' || (typeof document !== 'undefined' && document.hidden)) return;
+        try {
+          const p = ctx.resume();
+          if (p && p.then) p.then(() => this._handleStateChange(), () => {});
+        } catch (_) {}
+      };
+      if (pending) pending.then(doResume, doResume); else doResume();
     },
 
     _iosSession() {
@@ -1946,8 +1960,16 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     unlock() {
       if (!this.isUnlocked()) this._lastUnlockGestureAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       // A context that failed to reach 'running' after a previous gesture is discarded and rebuilt inside this gesture.
-      if (this.ctx && this.ctx.state !== 'running' && (this._needsRecreate || this.ctx.state === 'closed') && this._recreateCount < 6) {
-        this._recreate();
+      // A closed context is always replaced. A stuck one only if it is older than 2 s: one click fires
+      // pointerup + mouseup + click, and a fresh WebKit context turns 'running' asynchronously, so a younger
+      // context must never be rebuilt (that cascaded into several contexts per click).
+      if (this.ctx) {
+        const age = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - (this._createdAt || 0);
+        if (this.ctx.state === 'closed') {
+          this._recreate();
+        } else if (this.ctx.state !== 'running' && this._needsRecreate && age > 2000 && this._recreateCount < 6) {
+          this._recreate();
+        }
       }
       if (!this.ctx) this._create();
       const ctx = this.ctx;
@@ -1965,20 +1987,27 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           src.connect(ctx.destination);
           src.start(0);
         } catch (_) {}
+        // Every handler is scoped to its own context: closing an old context rejects its pending resume(),
+        // which must not flag the new one.
         try {
           const p = ctx.resume();
           if (p && typeof p.then === 'function') {
-            p.then(() => this._handleStateChange(), () => { this._needsRecreate = true; this._handleStateChange(); });
+            p.then(() => this._handleStateChange(), () => {
+              if (this.ctx === ctx && ctx.state !== 'running') this._needsRecreate = true;
+              this._handleStateChange();
+            });
           }
-        } catch (_) { this._needsRecreate = true; }
-        if (!this._checkTimer) {
-          this._checkTimer = setTimeout(() => {
-            this._checkTimer = null;
+        } catch (_) { if (this.ctx === ctx) this._needsRecreate = true; }
+        if (!ctx.__nvCheck) {
+          ctx.__nvCheck = true;
+          // Generous timeout: slow outputs (e.g. Bluetooth) can take a while to start.
+          setTimeout(() => {
+            ctx.__nvCheck = false;
             if (this.ctx === ctx && ctx.state !== 'running' && ctx.state !== 'closed' && !(typeof document !== 'undefined' && document.hidden)) {
               this._needsRecreate = true;
             }
             this._handleStateChange();
-          }, 450);
+          }, 2000);
         }
       }
       this._handleStateChange();
@@ -2024,6 +2053,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       const running = this.isUnlocked();
       if (running) {
         this._needsRecreate = false;
+        this._recreateCount = 0;
         const now = this._now();
         if (!this._unlocked || this.nextNoteTime < now - 0.1) this.nextNoteTime = now + 0.03;
         this._unlocked = true;
@@ -5031,7 +5061,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       // Clear previous backdrop meshes (and free their geometry buffers; textures are shared and kept)
       const shared = new Set(Object.values(NV.Assets.geos));
       const geos = new Set();
-      this.backdropGroup.traverse((o) => { if (o.geometry && !shared.has(o.geometry)) geos.add(o.geometry); });
+      this.backdropGroup.traverse((o) => { if (o.geometry && !o.isSprite && !shared.has(o.geometry)) geos.add(o.geometry); });
       while (this.backdropGroup.children.length > 0) {
         this.backdropGroup.remove(this.backdropGroup.children[0]);
       }
@@ -6354,13 +6384,22 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     },
 
     // ==================== POST-PROCESSING: lightweight HDR bloom (no external files) ====================
+    // Bloom needs renderable + filterable half-float targets; otherwise it is disabled (High then only raises resolution).
+    _detectPostSupport() {
+      try {
+        const r = this.renderer;
+        const ext = r.extensions;
+        const has = (n) => { try { return !!(ext.has ? ext.has(n) : ext.get(n)); } catch (_) { return false; } };
+        if (r.capabilities && r.capabilities.isWebGL2) {
+          return has('EXT_color_buffer_float') || has('EXT_color_buffer_half_float');
+        }
+        return has('OES_texture_half_float') && has('OES_texture_half_float_linear') && has('EXT_color_buffer_half_float');
+      } catch (_) {
+        return false;
+      }
+    },
+
     _initPost() {
-      const isWebGL2 = !!(this.renderer.capabilities && this.renderer.capabilities.isWebGL2);
-      const hf = THREE.HalfFloatType;
-      const mkRT = (w, h, samples = 0) => new THREE.WebGLRenderTarget(w, h, {
-        type: hf, depthBuffer: samples > 0 || w > 0, stencilBuffer: false, samples: isWebGL2 ? samples : 0,
-        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
-      });
       const vert = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
       const bright = new THREE.ShaderMaterial({
         uniforms: { tDiffuse: { value: null }, texel: { value: new THREE.Vector2() }, threshold: { value: 1.45 }, knee: { value: 0.5 } },
@@ -6416,15 +6455,34 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       scene.add(quad);
       this.post = {
         enabled: false,
-        rtScene: mkRT(4, 4, 4), rtA: mkRT(2, 2), rtB: mkRT(2, 2), rtC: mkRT(1, 1), rtD: mkRT(1, 1),
+        supported: this._detectPostSupport(),
+        rtScene: null, rtA: null, rtB: null, rtC: null, rtD: null,
         bright, blur, composite, quad, scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1),
         size: new THREE.Vector2(), aberr: 0,
       };
-      [this.post.rtA, this.post.rtB, this.post.rtC, this.post.rtD].forEach((rt) => { rt.depthBuffer = false; });
+    },
+
+    // Render targets exist only while bloom is on (created lazily, disposed when switching to Low).
+    _ensurePostTargets() {
+      const P = this.post;
+      if (!P || P.rtScene) return;
+      const isWebGL2 = !!(this.renderer.capabilities && this.renderer.capabilities.isWebGL2);
+      const mkRT = (depth, samples) => new THREE.WebGLRenderTarget(4, 4, {
+        type: THREE.HalfFloatType, depthBuffer: depth, stencilBuffer: false, samples: isWebGL2 ? samples : 0,
+        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      });
+      P.rtScene = mkRT(true, 2);
+      P.rtA = mkRT(false, 0); P.rtB = mkRT(false, 0); P.rtC = mkRT(false, 0); P.rtD = mkRT(false, 0);
+    },
+
+    _disposePostTargets() {
+      const P = this.post;
+      if (!P) return;
+      ['rtScene', 'rtA', 'rtB', 'rtC', 'rtD'].forEach((k) => { if (P[k]) { P[k].dispose(); P[k] = null; } });
     },
 
     _resizePost() {
-      if (!this.post) return;
+      if (!this.post || !this.post.rtScene) return;
       const v = this.renderer.getDrawingBufferSize(this.post.size);
       const w = Math.max(2, Math.floor(v.x)), h = Math.max(2, Math.floor(v.y));
       this.post.rtScene.setSize(w, h);
@@ -6439,15 +6497,23 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       if (!this.renderer) return;
       const q = this.settings.quality === 'auto' ? (this._autoLow ? 'low' : 'high') : this.settings.quality;
       this.effectiveQuality = q;
-      const dpr = window.devicePixelRatio || 1;
-      this.renderer.setPixelRatio(q === 'high' ? Math.min(dpr, 1.75) : Math.min(dpr, 1));
-      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      this._applyPixelRatio();
       if (this.post) {
-        this.post.enabled = q === 'high';
+        this.post.enabled = q === 'high' && this.post.supported;
+        if (this.post.enabled) this._ensurePostTargets();
+        else this._disposePostTargets();
         this._resizePost();
       }
       this.maxParticles = q === 'high' ? 520 : 240;
       this._perf = { t: 0, frames: 0, slow: 0 };
+    },
+
+    // Re-read devicePixelRatio every time (it changes when the window moves between displays)
+    _applyPixelRatio() {
+      const dpr = window.devicePixelRatio || 1;
+      const pr = this.effectiveQuality === 'high' ? Math.min(dpr, 1.5) : Math.min(dpr, 1);
+      if (this.renderer.getPixelRatio() !== pr) this.renderer.setPixelRatio(pr);
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
     },
 
     _blit(mat, target) {
@@ -6460,7 +6526,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     _render() {
       const P = this.post;
       const r = this.renderer;
-      if (!P || !P.enabled) {
+      if (!P || !P.enabled || !P.rtScene) {
         r.setRenderTarget(null);
         r.render(this.scene, this.camera);
         return;
@@ -6521,7 +6587,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       window.addEventListener('resize', () => {
         this.camera.aspect = window.innerWidth / window.innerHeight;
         this.camera.updateProjectionMatrix();
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this._applyPixelRatio();
         this._resizePost();
       });
 
@@ -6540,19 +6606,30 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         });
       }
 
-      // Inside the portal iframe: take keyboard focus so key presses (and the keydown audio unlock) reach the game.
+      // Inside the portal iframe: take keyboard focus on load and when the player clicks into the game,
+      // so key presses (and the keydown audio unlock) reach it. No focus grabbing on hover.
       const grabFocus = () => {
         try { if (document.hasFocus && !document.hasFocus()) window.focus(); } catch (_) {}
       };
       if (window.parent !== window) {
         grabFocus();
         window.addEventListener('load', grabFocus);
-        document.addEventListener('pointerenter', grabFocus, true);
-        document.documentElement.addEventListener('mouseenter', grabFocus);
+        window.addEventListener('pointerdown', grabFocus, { capture: true, passive: true });
       }
 
       window.addEventListener('keydown', (e) => {
         const code = e.code;
+        const tag = e.target && e.target.tagName;
+        const gameplay = this.mode === 'playing' || this.mode === 'cinema';
+        const settingsOpen = this.dom.modalSettings.classList.contains('is-active');
+        if (!gameplay) {
+          // Let form controls (e.g. the Settings sliders) keep their native arrow/space handling.
+          if (settingsOpen || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+            if (code === 'Escape' && settingsOpen) this._closeSettings();
+            return;
+          }
+          if (tag === 'BUTTON' && (code === 'Space' || code === 'Enter')) return; // native button activation
+        }
         if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(code)) {
           e.preventDefault();
         }
@@ -6560,10 +6637,6 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
         if (this.mode === 'cinema' && (code === 'Space' || code === 'Enter' || code === 'Escape')) {
           NV.Cinema.skip();
-          return;
-        }
-        if (code === 'Escape' && this.dom.modalSettings.classList.contains('is-active')) {
-          this._closeSettings();
           return;
         }
         if (code === 'KeyP' || code === 'Escape') {
@@ -6877,12 +6950,30 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     },
 
     // ==================== SCENE MANAGEMENT ====================
+    // Free an object's own GPU resources. Shared assets (NV.Assets geos/mats, engine-cached materials,
+    // textures, and the Sprite quad geometry three.js shares between all sprites) are never disposed.
+    _disposeObject(root) {
+      if (!root) return;
+      const sharedGeo = new Set(Object.values(NV.Assets.geos));
+      const sharedMat = new Set(Object.values(NV.Assets.mats));
+      [this._debrisMats, this._coreMats, this._boltMats].forEach((c) => { if (c) Object.values(c).forEach((m) => sharedMat.add(m)); });
+      if (this._missileMat) sharedMat.add(this._missileMat);
+      root.traverse((o) => {
+        if (o.geometry && !o.isSprite && !sharedGeo.has(o.geometry)) { try { o.geometry.dispose(); } catch (_) {} }
+        const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+        mats.forEach((m) => {
+          if (sharedMat.has(m) || (this.fxPool && o.isSprite && this.fxPool.includes(o))) return;
+          try { m.dispose(); } catch (_) {}
+        });
+      });
+    },
+
     _clearWorld() {
-      // Free GPU buffers of per-object geometries (shared ones in NV.Assets.geos are kept)
+      // Free GPU buffers of per-object geometries (shared ones in NV.Assets.geos and the shared sprite quad are kept)
       const shared = new Set(Object.values(NV.Assets.geos));
       const seen = new Set();
       this.worldGroup.traverse((o) => {
-        if (o.geometry && !shared.has(o.geometry) && !seen.has(o.geometry)) { seen.add(o.geometry); }
+        if (o.geometry && !o.isSprite && !shared.has(o.geometry) && !seen.has(o.geometry)) { seen.add(o.geometry); }
       });
       while (this.worldGroup.children.length > 0) {
         this.worldGroup.remove(this.worldGroup.children[0]);
@@ -7670,7 +7761,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     },
 
     // ==================== DAMAGE & SCORING ====================
-    _addScore(pts, wx, wz, labelOverride = null) {
+    _addScore(pts, wx, wz, labelOverride = null, labelPrefix = '') {
       this.state.combo++;
       this.state.comboTimer = 3.2;
       if (this.state.combo > this.state.maxCombo) this.state.maxCombo = this.state.combo;
@@ -7681,11 +7772,11 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         this.save.highScore = this.state.score;
       }
       if (wx !== undefined) {
-        this._spawnFloatText(wx, wz, labelOverride || `+${total}`, mult >= 2 ? '#f5a623' : '#7ae8ff');
+        this._spawnFloatText(wx, wz, labelOverride || `${labelPrefix}+${total}`, mult >= 2 || labelPrefix ? '#f5a623' : '#7ae8ff');
       }
       // Combo milestone rewards
       const c = this.state.combo;
-      if (c > 0 && c % 10 === 0 && !labelOverride) {
+      if (c > 0 && c % 10 === 0) {
         NV.Audio.playCombo(c);
         this.state.player.special = Math.min(100, this.state.player.special + 12 * this.state.upgrades.specialChargeMult);
         this._showToast(`COMBO ${c}! SCORE x${mult.toFixed(1)} · NOVA +12%`);
@@ -7760,13 +7851,14 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       e.flash = 0.1;
       if (e.hp <= 0) {
         this.worldGroup.remove(e.mesh);
+        this._disposeObject(e.mesh);
         this.state.kills++;
         const heavy = e.type === 'carrier' || e.elite;
         NV.Audio.playExplosion(heavy ? 1.6 : 0.95, pan);
         this._spawnExplosion(e.x, 0, e.z, e.elite ? 0xffd066 : e.cfg.color, heavy ? 26 : 18, heavy ? 1.4 : 0.95);
         this.shake = Math.max(this.shake, heavy ? 0.5 : 0.25);
         if (heavy) this.hitStopTimer = Math.max(this.hitStopTimer, 0.05);
-        this._addScore(e.cfg.score * (e.elite ? 2 : 1), e.x, e.z, e.elite ? `ELITE +${e.cfg.score * 2}` : null);
+        this._addScore(e.cfg.score * (e.elite ? 2 : 1), e.x, e.z, null, e.elite ? 'ELITE ' : '');
 
         // Chance to drop in-stage power-up (elites always drop)
         if (e.elite || Math.random() < (e.type === 'carrier' ? 0.55 : 0.115)) {
