@@ -51,6 +51,7 @@
   const spotlight = byId('spotlight');
   const spotlightArt = byId('spotlight-art');
   const spotlightContent = byId('spotlight-content');
+  const spotlightStatus = byId('spotlight-status');
   const spotlightIndex = byId('spotlight-index');
   const spotlightGenre = byId('spotlight-genre');
   const spotlightTitle = byId('spotlight-title');
@@ -98,6 +99,9 @@
   let activeGameId = null;
   let selectedGameId = GAME_KEYS[0];
   let lastTriggerEl = null;
+  let lastTriggerLaunch = null; // { id, inContinue } of the element that opened the theater
+  let pendingBack = false; // our own history.back() is in flight
+  let pendingBackTimer = 0;
   let audioCtx = null;
   let sfxEnabled = true;
   let loadingAnim = null;
@@ -159,13 +163,22 @@
     sfxIndicator.textContent = sfxEnabled ? 'ON' : 'OFF';
   }
 
-  // Only ever called from a user gesture (click / key), so the context is
-  // created inside one and browsers allow it to run.
+  // The context is only created during a user activation (click / key), so
+  // browsers allow it to run. Without the userActivation API we rely on the
+  // callers: tones for hash/history-driven opens and closes are skipped.
+  function hasUserActivation() {
+    const activation = navigator.userActivation;
+    return !activation || activation.isActive;
+  }
+
   function ensureAudioContext() {
     if (!sfxEnabled) return null;
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextCtor) return null;
-    if (!audioCtx) audioCtx = new AudioContextCtor();
+    if (!audioCtx) {
+      if (!hasUserActivation()) return null;
+      audioCtx = new AudioContextCtor();
+    }
     if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
     return audioCtx;
   }
@@ -420,9 +433,16 @@
     }
   }
 
-  function renderSpotlight(gameId, animate) {
+  function renderSpotlight(gameId, animate, announce) {
     const info = INFO.get(gameId);
     if (!info || !spotlight) return;
+
+    // Screen-reader announcement only when the user picks a game in the
+    // spotlight itself (rail click / arrows in the rail), never for grid
+    // hover/focus, dialogs or auto-rotation.
+    if (spotlightStatus) {
+      spotlightStatus.textContent = announce ? `Featured: ${info.title}, ${info.genre}` : '';
+    }
 
     const img = ensureSpotlightImage(gameId);
     if (spotlightArt) {
@@ -505,7 +525,7 @@
 
     railList.addEventListener('click', (event) => {
       const btn = event.target.closest('[data-spotlight-pick]');
-      if (btn) setSelectedGame(btn.getAttribute('data-spotlight-pick'));
+      if (btn) setSelectedGame(btn.getAttribute('data-spotlight-pick'), { announce: true });
     });
 
     railList.addEventListener('animationend', (event) => {
@@ -524,8 +544,6 @@
     const running = canRotate && !userPaused && pauseReasons.size === 0;
     spotlight.classList.toggle('is-rotating', running);
     spotlight.classList.toggle('can-rotate', canRotate);
-    // Announce changes only when they are user-driven, not on every auto-advance.
-    spotlightContent.setAttribute('aria-live', running ? 'off' : 'polite');
     if (running) ensureSpotlightImage(nextGameId(selectedGameId, 1, false));
   }
 
@@ -596,7 +614,7 @@
       layer.classList.toggle('is-active', layer.getAttribute('data-ambient') === gameId);
     });
 
-    if (changed) renderSpotlight(gameId, options.animate !== false);
+    if (changed) renderSpotlight(gameId, options.animate !== false, Boolean(options.announce));
     if (changed && !options.silent) playUiTone('select');
   }
 
@@ -871,12 +889,20 @@
     const info = INFO.get(gameId);
     const wasOpen = Boolean(activeGameId);
 
+    // Never start a game behind the modal details dialog (e.g. via Back/Forward).
+    // Closing it first also returns focus to its opener, which we remember below.
+    if (detailsDialog && detailsDialog.open) closeDetails();
+
     if (!wasOpen) {
       lastTriggerEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const launchEl = lastTriggerEl && lastTriggerEl.closest('[data-launch]');
+      lastTriggerLaunch = launchEl
+        ? { id: launchEl.getAttribute('data-launch'), inContinue: Boolean(continueList && continueList.contains(launchEl)) }
+        : null;
     }
 
     setSelectedGame(gameId, { silent: true, animate: false });
-    playUiTone('launch');
+    if (!options.fromHistory) playUiTone('launch');
     recordPlay(gameId);
 
     activeGameId = gameId;
@@ -898,7 +924,9 @@
       closeBtn.focus({ preventScroll: true });
     }
 
-    if (updateHash && window.location.hash !== `#play=${gameId}`) {
+    // If our own Back is still in flight, its popstate will add this game's
+    // entry once it lands (see syncFromHash); pushing now would be undone.
+    if (updateHash && !pendingBack && window.location.hash !== `#play=${gameId}`) {
       if (wasOpen) {
         // Switching inside the theater replaces the entry so one Back exits.
         const pushed = window.history.state && window.history.state[HISTORY_STATE_FLAG] === 'play';
@@ -915,7 +943,7 @@
     if (!activeGameId) return;
     const updateHash = options.updateHash !== false;
 
-    playUiTone('back');
+    if (!options.fromHistory) playUiTone('back');
 
     if (document.fullscreenElement && document.exitFullscreen) {
       document.exitFullscreen().catch(() => {});
@@ -939,6 +967,9 @@
       const state = window.history.state;
       if (state && state[HISTORY_STATE_FLAG] === 'play') {
         // We pushed this entry: step back so Back/Forward stay intuitive.
+        pendingBack = true;
+        clearTimeout(pendingBackTimer);
+        pendingBackTimer = setTimeout(settlePendingBack, 1500); // in case popstate never comes
         window.history.back();
       } else {
         window.history.replaceState(null, '', window.location.pathname + window.location.search);
@@ -948,11 +979,16 @@
     if (lastTriggerEl && lastTriggerEl.isConnected && lastTriggerEl.offsetParent !== null && lastTriggerEl !== document.body) {
       lastTriggerEl.focus();
     } else {
+      // The trigger may have been re-rendered (e.g. the "Continue playing" row).
+      const replacement = lastTriggerLaunch && lastTriggerLaunch.inContinue && continueList
+        ? continueList.querySelector(`[data-launch="${lastTriggerLaunch.id}"]`)
+        : null;
       const card = cardById.get(selectedGameId);
-      const play = card && !card.hidden ? card.querySelector('.btn-play') : spotlightPlay;
+      const play = replacement || (card && !card.hidden ? card.querySelector('.btn-play') : spotlightPlay);
       if (play) play.focus({ preventScroll: true });
     }
     lastTriggerEl = null;
+    lastTriggerLaunch = null;
   }
 
   function onFrameLoad() {
@@ -1035,6 +1071,9 @@
   window.addEventListener('keydown', (event) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
 
+    // The native modal dialog handles Escape itself; it always goes first.
+    if (detailsDialog && detailsDialog.open) return;
+
     if (activeGameId) {
       // Keys only reach us when focus is on the portal chrome, not in the game.
       if (event.key === 'Escape') {
@@ -1043,8 +1082,6 @@
       }
       return;
     }
-
-    if (detailsDialog && detailsDialog.open) return; // native dialog handles Esc
 
     const target = event.target;
     const tag = target && target.tagName;
@@ -1075,9 +1112,9 @@
     if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
       event.preventDefault();
       const nextId = nextGameId(selectedGameId, event.key === 'ArrowRight' ? 1 : -1);
-      setSelectedGame(nextId);
-      // Keep keyboard focus with the selection when it lives in the grid/rail.
       const active = document.activeElement;
+      setSelectedGame(nextId, { announce: Boolean(active && railList && railList.contains(active)) });
+      // Keep keyboard focus with the selection when it lives in the grid/rail.
       if (active && grid && grid.contains(active)) {
         const play = cardById.get(nextId) && cardById.get(nextId).querySelector('.btn-play');
         if (play) play.focus();
@@ -1107,12 +1144,28 @@
   // --------------------------------------------------------------------------
   // Init + Back/Forward sync with deep links (#play=<slug>)
   // --------------------------------------------------------------------------
+  // Our history.back() has landed (or timed out). If a game was opened in the
+  // meantime, keep it open and give it its own entry instead of closing it.
+  function settlePendingBack() {
+    if (!pendingBack) return false;
+    pendingBack = false;
+    clearTimeout(pendingBackTimer);
+    if (activeGameId) {
+      if (window.location.hash !== `#play=${activeGameId}`) {
+        window.history.pushState({ [HISTORY_STATE_FLAG]: 'play', gameId: activeGameId }, '', `#play=${activeGameId}`);
+      }
+      return true;
+    }
+    return false;
+  }
+
   function syncFromHash() {
+    if (settlePendingBack()) return;
     const match = window.location.hash.match(/^#play=([a-z0-9-]+)$/i);
     if (match && GAMES[match[1]]) {
-      if (activeGameId !== match[1]) openGame(match[1], { updateHash: false });
+      if (activeGameId !== match[1]) openGame(match[1], { updateHash: false, fromHistory: true });
     } else if (activeGameId) {
-      closeGame({ updateHash: false });
+      closeGame({ updateHash: false, fromHistory: true });
     }
   }
 

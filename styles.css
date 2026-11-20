@@ -662,7 +662,13 @@ kbd {
   line-height: 1;
 }
 
+.site-title-brand,
+.site-title-tag {
+  overflow-wrap: normal;
+}
+
 .site-title-brand {
+  white-space: nowrap;
   padding: 0.38rem 0.7rem;
   border-radius: var(--radius-pill);
   background: linear-gradient(135deg, var(--accent-hi), var(--accent-lo));
@@ -1869,9 +1875,11 @@ kbd {
   transition: opacity 280ms var(--ease-out), visibility 280ms var(--ease-out);
 }
 
+/* Visible at once on open (so focus can move into it); hide is delayed on close. */
 .theater.is-open {
   opacity: 1;
   visibility: visible;
+  transition: opacity 280ms var(--ease-out), visibility 0s;
 }
 
 .theater-bar {
@@ -2502,10 +2510,13 @@ kbd {
     scroll-behavior: auto;
   }
 
+  /* `none`, not a tiny duration: with the default `transition-property: all`
+     a near-zero duration would make every element transition its inherited
+     visibility, leaving the theater's controls unfocusable for a frame. */
   *,
   *::before,
   *::after {
-    transition-duration: 0.01ms !important;
+    transition: none !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
