@@ -14,6 +14,14 @@ python3 -m http.server 8000
 
 Then open `http://localhost:8000/`, or deep-link to a game with `http://localhost:8000/#play=nordrally`.
 
+## Model and effort for subagents
+
+These are the repository owner's standing instructions until they say otherwise:
+- **Coding work and general subagents:** use `model: "opus"` with `effort: "high"`.
+- **Git and GitHub work** (commits, pushes, branches, pull requests, issues): delegate it to a subagent with `model: "sonnet"` and `effort: "medium"`.
+
+This file can't change the main session's own model or effort. The user sets those (e.g. with `/model`).
+
 ## Architecture
 
 **Portal (`index.html` + `app.js` + `styles.css`)**: a single-page launcher. `app.js` is one IIFE with no dependencies. It handles:
