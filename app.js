@@ -1,6 +1,9 @@
 (function () {
   'use strict';
 
+  // Per-game data used by the theater. Rich copy (genre, description, tags,
+  // specs, accent colour, cover art) lives in each `.game-card` in index.html
+  // and is read from there, so the markup stays the single source for SEO/no-JS.
   const GAMES = {
     trollguard: {
       title: 'Trollguard',
@@ -24,42 +27,132 @@
     },
   };
 
+  // Order sets arrow-key browsing, spotlight rotation and the 1–N hotkeys.
   const GAME_KEYS = ['trollguard', 'sap-fighter', 'nordrally', 'nova-vanguard'];
   const STORAGE_SFX_KEY = 'opengames_ui_sfx';
   const STORAGE_PLAYED_KEY = 'opengames_played_history';
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const HISTORY_STATE_FLAG = 'opengames';
 
-  // DOM References
-  const cards = Array.from(document.querySelectorAll('.game-card'));
-  const ambientLayers = Array.from(document.querySelectorAll('.ambient-layer'));
-  const sfxToggleBtn = document.getElementById('sfx-toggle-btn');
-  const sfxIndicator = document.getElementById('sfx-indicator');
+  const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let prefersReducedMotion = reducedMotionQuery.matches;
 
-  const theater = document.getElementById('game-theater');
-  const stage = document.getElementById('theater-stage');
-  const frame = document.getElementById('theater-frame');
-  const loading = document.getElementById('theater-loading');
-  const loadingText = document.getElementById('theater-loading-text');
-  const titleEl = document.getElementById('theater-game-title');
-  const controlsHintEl = document.getElementById('theater-controls-hint');
-  const closeBtn = document.getElementById('theater-close-btn');
-  const reloadBtn = document.getElementById('theater-reload-btn');
-  const fullscreenBtn = document.getElementById('theater-fullscreen-btn');
-  const directLink = document.getElementById('theater-direct-link');
-  const switcherBtns = document.querySelectorAll('[data-switch]');
+  const byId = (id) => document.getElementById(id);
+
+  // DOM references
+  const siteHeader = byId('site-header');
+  const mainEl = byId('main');
+  const footerEl = byId('site-footer');
+  const cards = Array.from(document.querySelectorAll('.game-card[data-game]'));
+  const cardById = new Map(cards.map((card) => [card.getAttribute('data-game'), card]));
+  const ambientLayers = Array.from(document.querySelectorAll('.ambient-layer[data-ambient]'));
+  const sfxToggleBtn = byId('sfx-toggle-btn');
+  const sfxIndicator = byId('sfx-indicator');
+
+  const spotlight = byId('spotlight');
+  const spotlightArt = byId('spotlight-art');
+  const spotlightContent = byId('spotlight-content');
+  const spotlightStatus = byId('spotlight-status');
+  const spotlightIndex = byId('spotlight-index');
+  const spotlightGenre = byId('spotlight-genre');
+  const spotlightTitle = byId('spotlight-title');
+  const spotlightSubtitle = byId('spotlight-subtitle');
+  const spotlightPlayed = byId('spotlight-played');
+  const spotlightPitch = byId('spotlight-pitch');
+  const spotlightTags = byId('spotlight-tags');
+  const spotlightPlay = byId('spotlight-play');
+  const spotlightHotkey = byId('spotlight-hotkey');
+  const spotlightDetails = byId('spotlight-details');
+  const spotlightPause = byId('spotlight-pause');
+  const railList = byId('rail-list');
+
+  const continueSection = byId('continue');
+  const continueList = byId('continue-list');
+  const clearHistoryBtn = byId('clear-history');
+
+  const grid = byId('game-grid');
+  const filterChips = Array.from(document.querySelectorAll('[data-filter]'));
+  const searchInput = byId('library-search');
+  const libraryCount = byId('library-count');
+  const libraryEmpty = byId('library-empty');
+  const libraryReset = byId('library-reset');
+
+  const detailsDialog = byId('game-details');
+
+  const theater = byId('game-theater');
+  const stage = byId('theater-stage');
+  let frame = byId('theater-frame');
+  const loading = byId('theater-loading');
+  const loadingText = byId('theater-loading-text');
+  const loadingArt = byId('theater-loading-art');
+  const loadingCover = byId('theater-loading-cover');
+  const loadingBar = byId('theater-loading-bar');
+  const loadingTip = byId('theater-loading-tip');
+  const titleEl = byId('theater-game-title');
+  const thumbEl = byId('theater-thumb');
+  const controlsHintEl = byId('theater-controls-hint');
+  const closeBtn = byId('theater-close-btn');
+  const reloadBtn = byId('theater-reload-btn');
+  const fullscreenBtn = byId('theater-fullscreen-btn');
+  const directLink = byId('theater-direct-link');
+  const switcherBtns = Array.from(document.querySelectorAll('[data-switch]'));
 
   let activeGameId = null;
   let selectedGameId = GAME_KEYS[0];
   let lastTriggerEl = null;
+  let lastTriggerLaunch = null; // { id, inContinue } of the element that opened the theater
+  let pendingBack = false; // our own history.back() is in flight
+  let pendingBackTimer = 0;
   let audioCtx = null;
   let sfxEnabled = true;
+  let loadingAnim = null;
 
   // --------------------------------------------------------------------------
-  // Subtle Console UI Sound Effects (Web Audio API)
+  // Game info (read once from the card markup)
+  // --------------------------------------------------------------------------
+  const INFO = new Map();
+  GAME_KEYS.forEach((id, index) => {
+    const card = cardById.get(id);
+    const game = GAMES[id];
+    if (!card || !game) return;
+    const text = (sel) => {
+      const el = card.querySelector(sel);
+      return el ? el.textContent.replace(/\s+/g, ' ').trim() : '';
+    };
+    const img = card.querySelector('.card-cover img');
+    const tags = Array.from(card.querySelectorAll('.card-tags li')).map((li) => li.textContent.trim());
+    const genres = (card.getAttribute('data-genres') || '').toLowerCase().split(/\s+/).filter(Boolean);
+    const info = {
+      id,
+      index,
+      hotkey: index < 9 ? String(index + 1) : '',
+      title: game.title,
+      file: game.file,
+      controls: game.controls,
+      genre: text('.card-genre'),
+      subtitle: text('.card-subtitle'),
+      description: text('.card-description'),
+      tags,
+      genres,
+      cover: img ? img.getAttribute('src') : '',
+      alt: img ? img.getAttribute('alt') : '',
+      specs: card.querySelector('.card-specs'),
+      accent: card.style.getPropertyValue('--game-accent').trim(),
+    };
+    info.haystack = [info.title, info.genre, info.subtitle, info.description, tags.join(' '), genres.join(' ')]
+      .join(' ')
+      .toLowerCase();
+    INFO.set(id, info);
+  });
+
+  document.querySelectorAll('[data-game-count]').forEach((el) => {
+    el.textContent = String(INFO.size).padStart(2, '0');
+  });
+
+  // --------------------------------------------------------------------------
+  // Subtle console UI sound effects (Web Audio API, synthesized)
   // --------------------------------------------------------------------------
   try {
-    const savedSfx = localStorage.getItem(STORAGE_SFX_KEY);
-    if (savedSfx === 'off') sfxEnabled = false;
+    if (localStorage.getItem(STORAGE_SFX_KEY) === 'off') sfxEnabled = false;
   } catch (_) {
     // Ignore storage access errors
   }
@@ -70,22 +163,30 @@
     sfxIndicator.textContent = sfxEnabled ? 'ON' : 'OFF';
   }
 
+  // The context is only created during a user activation (click / key), so
+  // browsers allow it to run. Without the userActivation API we rely on the
+  // callers: tones for hash/history-driven opens and closes are skipped.
+  function hasUserActivation() {
+    const activation = navigator.userActivation;
+    return !activation || activation.isActive;
+  }
+
   function ensureAudioContext() {
     if (!sfxEnabled) return null;
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextCtor) return null;
     if (!audioCtx) {
+      if (!hasUserActivation()) return null;
       audioCtx = new AudioContextCtor();
     }
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume().catch(() => {});
-    }
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
     return audioCtx;
   }
 
   function playUiTone(type) {
     if (!sfxEnabled) return;
-    const ctx = ensureAudioContext();
+    // Hover never creates the context; only gestures (click/keys) do.
+    const ctx = type === 'select' && !audioCtx ? null : ensureAudioContext();
     if (!ctx || ctx.state !== 'running') return;
 
     const now = ctx.currentTime;
@@ -136,13 +237,72 @@
     });
   }
 
+  // Unlock the UI audio context on the first real gesture so hover ticks work.
+  ['pointerdown', 'keydown'].forEach((type) => {
+    window.addEventListener(type, function unlock() {
+      window.removeEventListener(type, unlock, true);
+      ensureAudioContext();
+    }, true);
+  });
+
   // --------------------------------------------------------------------------
-  // Play History Badges
+  // Small DOM helpers
+  // --------------------------------------------------------------------------
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  function icon(name, size) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('width', String(size));
+    svg.setAttribute('height', String(size));
+    svg.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS(SVG_NS, 'use');
+    use.setAttribute('href', `#i-${name}`);
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function el(tag, className, textContent) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (textContent != null) node.textContent = textContent;
+    return node;
+  }
+
+  function fillTags(list, tags) {
+    list.replaceChildren(...tags.map((tag) => el('li', 'tag', tag)));
+  }
+
+  const rtf = typeof Intl !== 'undefined' && Intl.RelativeTimeFormat
+    ? new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+    : null;
+
+  function timeAgo(ts) {
+    const diffSec = (ts - Date.now()) / 1000;
+    const units = [
+      ['year', 31536000],
+      ['month', 2592000],
+      ['week', 604800],
+      ['day', 86400],
+      ['hour', 3600],
+      ['minute', 60],
+    ];
+    for (const [unit, seconds] of units) {
+      if (Math.abs(diffSec) >= seconds) {
+        const value = Math.round(diffSec / seconds);
+        return rtf ? rtf.format(value, unit) : `${Math.abs(value)} ${unit}s ago`;
+      }
+    }
+    return 'just now';
+  }
+
+  // --------------------------------------------------------------------------
+  // Play history: badges, spotlight chip and "Continue playing" row
+  // Format (unchanged): { "<slug>": <timestamp ms>, ... }
   // --------------------------------------------------------------------------
   function loadPlayHistory() {
     try {
       const raw = localStorage.getItem(STORAGE_PLAYED_KEY);
-      return raw ? JSON.parse(raw) : {};
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
     } catch (_) {
       return {};
     }
@@ -157,37 +317,292 @@
     renderPlayHistory();
   }
 
+  function sortedHistory(history) {
+    return Object.entries(history)
+      .filter(([id, ts]) => INFO.has(id) && typeof ts === 'number' && ts > 0)
+      .sort((a, b) => b[1] - a[1]);
+  }
+
   function renderPlayHistory() {
     const history = loadPlayHistory();
-    let latestId = null;
-    let latestTime = 0;
-
-    for (const [id, ts] of Object.entries(history)) {
-      if (ts > latestTime) {
-        latestTime = ts;
-        latestId = id;
-      }
-    }
+    const recent = sortedHistory(history);
+    const latestId = recent.length ? recent[0][0] : null;
 
     cards.forEach((card) => {
       const id = card.getAttribute('data-game');
       const label = card.querySelector(`[data-recent-label="${id}"]`);
-      if (history[id]) {
-        card.classList.add('has-played');
-        if (label) {
-          label.textContent = id === latestId ? 'Last Played' : 'Played';
-        }
+      const played = Boolean(history[id]);
+      card.classList.toggle('has-played', played);
+      if (label && played) {
+        label.textContent = id === latestId ? 'Last Played' : 'Played';
       }
+    });
+
+    renderSpotlightPlayed(history);
+
+    if (!continueSection || !continueList) return;
+    if (!recent.length) {
+      continueSection.hidden = true;
+      continueList.replaceChildren();
+      return;
+    }
+
+    const items = recent.slice(0, 4).map(([id, ts], i) => {
+      const info = INFO.get(id);
+      const li = el('li', 'continue-item');
+      if (info.accent) li.style.setProperty('--game-accent', info.accent);
+
+      const link = el('a', 'continue-card');
+      link.href = info.file;
+      link.setAttribute('data-launch', id);
+
+      const img = el('img', 'continue-cover');
+      img.src = info.cover;
+      img.alt = '';
+      img.width = 1280;
+      img.height = 714;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+
+      const meta = el('span', 'continue-meta');
+      meta.append(
+        el('span', 'continue-title', info.title),
+        el('span', 'continue-time', `${i === 0 ? 'Last played' : 'Played'} ${timeAgo(ts)}`)
+      );
+
+      const play = el('span', 'continue-play');
+      play.setAttribute('aria-hidden', 'true');
+      play.appendChild(icon('play', 16));
+
+      link.setAttribute('aria-label', `Resume ${info.title}, ${i === 0 ? 'last played' : 'played'} ${timeAgo(ts)}`);
+      link.append(img, meta, play);
+      li.appendChild(link);
+      return li;
+    });
+
+    continueList.replaceChildren(...items);
+    continueSection.hidden = false;
+  }
+
+  if (clearHistoryBtn) {
+    clearHistoryBtn.addEventListener('click', () => {
+      try {
+        localStorage.removeItem(STORAGE_PLAYED_KEY);
+      } catch (_) {}
+      cards.forEach((card) => card.classList.remove('has-played'));
+      renderPlayHistory();
+      const target = cardById.get(selectedGameId);
+      const play = target && target.querySelector('.btn-play');
+      if (play) play.focus({ preventScroll: true });
     });
   }
 
-  renderPlayHistory();
+  // --------------------------------------------------------------------------
+  // Spotlight (featured hero) with pausable auto-rotation
+  // --------------------------------------------------------------------------
+  const railThumbs = new Map();
+  const pauseReasons = new Set();
+  let userPaused = false;
+
+  function ensureSpotlightImage(gameId) {
+    if (!spotlightArt) return null;
+    let img = spotlightArt.querySelector(`[data-art="${gameId}"]`);
+    if (!img) {
+      const info = INFO.get(gameId);
+      if (!info) return null;
+      img = el('img', 'spotlight-img');
+      img.setAttribute('data-art', gameId);
+      img.src = info.cover;
+      img.alt = '';
+      img.width = 1280;
+      img.height = 714;
+      img.decoding = 'async';
+      spotlightArt.appendChild(img);
+    }
+    return img;
+  }
+
+  function renderSpotlightPlayed(history) {
+    if (!spotlightPlayed) return;
+    const ts = (history || loadPlayHistory())[selectedGameId];
+    if (typeof ts === 'number' && ts > 0) {
+      spotlightPlayed.textContent = `Played ${timeAgo(ts)}`;
+      spotlightPlayed.hidden = false;
+    } else {
+      spotlightPlayed.hidden = true;
+    }
+  }
+
+  function renderSpotlight(gameId, animate, announce) {
+    const info = INFO.get(gameId);
+    if (!info || !spotlight) return;
+
+    // Screen-reader announcement only when the user picks a game in the
+    // spotlight itself (rail click / arrows in the rail), never for grid
+    // hover/focus, dialogs or auto-rotation.
+    if (spotlightStatus) {
+      spotlightStatus.textContent = announce ? `Featured: ${info.title}, ${info.genre}` : '';
+    }
+
+    const img = ensureSpotlightImage(gameId);
+    if (spotlightArt) {
+      spotlightArt.querySelectorAll('.spotlight-img').forEach((node) => {
+        node.classList.toggle('is-active', node === img);
+      });
+    }
+    if (info.accent) spotlight.style.setProperty('--game-accent', info.accent);
+
+    spotlightIndex.textContent = `${String(info.index + 1).padStart(2, '0')} / ${String(INFO.size).padStart(2, '0')}`;
+    spotlightGenre.textContent = info.genre;
+    spotlightTitle.textContent = info.title;
+    spotlightSubtitle.textContent = info.subtitle;
+    spotlightPitch.textContent = info.description;
+    fillTags(spotlightTags, info.tags);
+    spotlightPlay.href = info.file;
+    spotlightPlay.setAttribute('data-launch', gameId);
+    spotlightPlay.setAttribute('aria-label', `Play ${info.title}`);
+    if (spotlightHotkey) {
+      spotlightHotkey.textContent = info.hotkey;
+      spotlightHotkey.hidden = !info.hotkey;
+    }
+    if (spotlightDetails) {
+      spotlightDetails.setAttribute('data-details', gameId);
+      spotlightDetails.setAttribute('aria-label', `${info.title} details`);
+    }
+    renderSpotlightPlayed();
+
+    railThumbs.forEach((thumb, id) => {
+      const isActive = id === gameId;
+      thumb.classList.toggle('is-active', isActive);
+      if (isActive) thumb.setAttribute('aria-current', 'true');
+      else thumb.removeAttribute('aria-current');
+    });
+
+    if (animate && !prefersReducedMotion && typeof spotlightContent.animate === 'function') {
+      spotlightContent.animate(
+        [
+          { opacity: 0, transform: 'translateY(10px)' },
+          { opacity: 1, transform: 'none' },
+        ],
+        { duration: 480, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+      );
+    }
+
+    // Warm up the next slide so rotation never shows an empty frame.
+    if (isRotating()) ensureSpotlightImage(nextGameId(gameId, 1, false));
+  }
+
+  function buildRail() {
+    if (!railList) return;
+    const thumbs = GAME_KEYS.filter((id) => INFO.has(id)).map((id) => {
+      const info = INFO.get(id);
+      const btn = el('button', 'rail-thumb');
+      btn.type = 'button';
+      btn.setAttribute('data-spotlight-pick', id);
+      btn.setAttribute('aria-label', `Feature ${info.title}`);
+      if (info.accent) btn.style.setProperty('--game-accent', info.accent);
+
+      const img = el('img', 'rail-thumb-img');
+      img.src = info.cover;
+      img.alt = '';
+      img.width = 1280;
+      img.height = 714;
+      img.decoding = 'async';
+
+      const text = el('span', 'rail-thumb-text');
+      text.setAttribute('aria-hidden', 'true');
+      text.append(el('span', 'rail-thumb-title', info.title), el('span', 'rail-thumb-genre', info.genre));
+
+      const progress = el('span', 'rail-progress');
+      progress.setAttribute('aria-hidden', 'true');
+      progress.appendChild(el('span', 'rail-progress-bar'));
+
+      btn.append(img, text, progress);
+      railThumbs.set(id, btn);
+      return btn;
+    });
+    railList.replaceChildren(...thumbs);
+
+    railList.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-spotlight-pick]');
+      if (btn) setSelectedGame(btn.getAttribute('data-spotlight-pick'), { announce: true });
+    });
+
+    railList.addEventListener('animationend', (event) => {
+      if (event.animationName !== 'rail-progress' || !isRotating()) return;
+      setSelectedGame(nextGameId(selectedGameId, 1, false), { silent: true, animate: true });
+    });
+  }
+
+  function isRotating() {
+    return Boolean(spotlight) && spotlight.classList.contains('is-rotating');
+  }
+
+  function updateRotation() {
+    if (!spotlight) return;
+    const canRotate = !prefersReducedMotion && INFO.size > 1;
+    const running = canRotate && !userPaused && pauseReasons.size === 0;
+    spotlight.classList.toggle('is-rotating', running);
+    spotlight.classList.toggle('can-rotate', canRotate);
+    if (running) ensureSpotlightImage(nextGameId(selectedGameId, 1, false));
+  }
+
+  if (spotlightPause) {
+    spotlightPause.addEventListener('click', () => {
+      userPaused = !userPaused;
+      spotlightPause.setAttribute('aria-pressed', userPaused ? 'true' : 'false');
+      spotlightPause.setAttribute('aria-label', userPaused ? 'Resume featured rotation' : 'Pause featured rotation');
+      updateRotation();
+    });
+  }
+
+  function bindPause(target, reason, enterEvent, leaveEvent) {
+    if (!target) return;
+    target.addEventListener(enterEvent, () => {
+      pauseReasons.add(reason);
+      updateRotation();
+    });
+    target.addEventListener(leaveEvent, (event) => {
+      if (leaveEvent === 'focusout' && target.contains(event.relatedTarget)) return;
+      pauseReasons.delete(reason);
+      updateRotation();
+    });
+  }
+
+  // Pause while the pointer is over the copy/buttons or the rail (not the
+  // whole art, which fills the first screen), and while focus is inside.
+  bindPause(spotlightContent, 'hover-content', 'pointerenter', 'pointerleave');
+  bindPause(byId('spotlight-rail'), 'hover-rail', 'pointerenter', 'pointerleave');
+  bindPause(spotlight, 'focus', 'focusin', 'focusout');
+  bindPause(grid, 'grid', 'pointerenter', 'pointerleave');
+
+  if (spotlight && 'IntersectionObserver' in window) {
+    new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) pauseReasons.delete('offscreen');
+        else pauseReasons.add('offscreen');
+      });
+      updateRotation();
+    }, { threshold: 0.45 }).observe(spotlight);
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) pauseReasons.add('hidden');
+    else pauseReasons.delete('hidden');
+    updateRotation();
+  });
+
+  const onMotionChange = () => {
+    prefersReducedMotion = reducedMotionQuery.matches;
+    updateRotation();
+  };
+  if (reducedMotionQuery.addEventListener) reducedMotionQuery.addEventListener('change', onMotionChange);
 
   // --------------------------------------------------------------------------
-  // Ambient Backdrop & Card Selection
+  // Selection: cards, ambient backdrop and spotlight follow one selected game
   // --------------------------------------------------------------------------
-  function setSelectedGame(gameId, options = { silent: false }) {
-    if (!GAMES[gameId]) return;
+  function setSelectedGame(gameId, options = {}) {
+    if (!GAMES[gameId] || !INFO.has(gameId)) return;
     const changed = selectedGameId !== gameId;
     selectedGameId = gameId;
 
@@ -199,103 +614,338 @@
       layer.classList.toggle('is-active', layer.getAttribute('data-ambient') === gameId);
     });
 
-    if (changed && !options.silent) {
-      playUiTone('select');
-    }
+    if (changed) renderSpotlight(gameId, options.animate !== false, Boolean(options.announce));
+    if (changed && !options.silent) playUiTone('select');
   }
+
+  function visibleGameIds() {
+    return GAME_KEYS.filter((id) => {
+      const card = cardById.get(id);
+      return card && !card.hidden;
+    });
+  }
+
+  function nextGameId(fromId, step, visibleOnly = true) {
+    const pool = visibleOnly ? visibleGameIds() : GAME_KEYS.filter((id) => INFO.has(id));
+    if (!pool.length) return fromId;
+    const idx = pool.indexOf(fromId);
+    if (idx === -1) return pool[step > 0 ? 0 : pool.length - 1];
+    return pool[(idx + step + pool.length) % pool.length];
+  }
+
+  const canTilt = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
 
   cards.forEach((card) => {
     const gameId = card.getAttribute('data-game');
 
-    card.addEventListener('mouseenter', () => setSelectedGame(gameId));
+    card.addEventListener('pointerenter', (event) => {
+      if (event.pointerType === 'mouse' || event.pointerType === 'pen') setSelectedGame(gameId);
+    });
     card.addEventListener('focusin', () => setSelectedGame(gameId, { silent: true }));
 
-    if (!prefersReducedMotion) {
-      card.addEventListener('mousemove', (event) => {
-        const rect = card.getBoundingClientRect();
-        const x = (event.clientX - rect.left) / rect.width;
-        const y = (event.clientY - rect.top) / rect.height;
-        const tiltY = (x - 0.5) * 4;
-        const tiltX = (0.5 - y) * 3.5;
+    if (!canTilt) return;
+    let raf = 0;
+    let pointerX = 0;
+    let pointerY = 0;
 
+    card.addEventListener('pointermove', (event) => {
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+      if (raf || prefersReducedMotion) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        // One read, then writes, once per frame.
+        const rect = card.getBoundingClientRect();
+        const x = Math.min(Math.max((pointerX - rect.left) / rect.width, 0), 1);
+        const y = Math.min(Math.max((pointerY - rect.top) / rect.height, 0), 1);
         card.style.setProperty('--spot-x', `${(x * 100).toFixed(1)}%`);
         card.style.setProperty('--spot-y', `${(y * 100).toFixed(1)}%`);
-        card.style.setProperty('--tilt-x', `${tiltX.toFixed(2)}deg`);
-        card.style.setProperty('--tilt-y', `${tiltY.toFixed(2)}deg`);
+        card.style.setProperty('--tilt-x', `${((0.5 - y) * 4).toFixed(2)}deg`);
+        card.style.setProperty('--tilt-y', `${((x - 0.5) * 5).toFixed(2)}deg`);
       });
+    });
 
-      card.addEventListener('mouseleave', () => {
-        card.style.setProperty('--tilt-x', '0deg');
-        card.style.setProperty('--tilt-y', '0deg');
-      });
-    }
+    card.addEventListener('pointerleave', () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      card.style.setProperty('--tilt-x', '0deg');
+      card.style.setProperty('--tilt-y', '0deg');
+    });
   });
 
   // --------------------------------------------------------------------------
-  // Arcade Theater Management
+  // Library filters and search
+  // --------------------------------------------------------------------------
+  let activeFilter = 'all';
+  let searchQuery = '';
+
+  filterChips.forEach((chip) => {
+    const filter = chip.getAttribute('data-filter');
+    const count = filter === 'all'
+      ? INFO.size
+      : Array.from(INFO.values()).filter((info) => info.genres.includes(filter)).length;
+    if (count === 0) chip.hidden = true;
+    const badge = el('span', 'chip-count', String(count));
+    badge.setAttribute('aria-hidden', 'true');
+    chip.appendChild(badge);
+    chip.setAttribute('aria-label', `${chip.firstChild.textContent.trim()} (${count})`);
+  });
+
+  function applyFilters() {
+    const terms = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    let visible = 0;
+
+    cards.forEach((card) => {
+      const info = INFO.get(card.getAttribute('data-game'));
+      const genres = info ? info.genres : [];
+      const matchesFilter = activeFilter === 'all' || genres.includes(activeFilter);
+      const matchesSearch = !terms.length || (info && terms.every((term) => info.haystack.includes(term)));
+      const show = matchesFilter && matchesSearch;
+      card.hidden = !show;
+      if (show) visible += 1;
+    });
+
+    filterChips.forEach((chip) => {
+      chip.setAttribute('aria-pressed', chip.getAttribute('data-filter') === activeFilter ? 'true' : 'false');
+    });
+
+    if (libraryCount) {
+      const filtered = activeFilter !== 'all' || terms.length;
+      libraryCount.textContent = filtered
+        ? `${visible} of ${cards.length} games`
+        : `${cards.length} ${cards.length === 1 ? 'game' : 'games'}`;
+    }
+    if (libraryEmpty) libraryEmpty.hidden = visible > 0;
+  }
+
+  filterChips.forEach((chip) => {
+    chip.addEventListener('click', () => {
+      activeFilter = chip.getAttribute('data-filter') || 'all';
+      applyFilters();
+      playUiTone('select');
+    });
+  });
+
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      searchQuery = searchInput.value.trim();
+      applyFilters();
+    });
+  }
+
+  if (libraryReset) {
+    libraryReset.addEventListener('click', () => {
+      activeFilter = 'all';
+      searchQuery = '';
+      if (searchInput) searchInput.value = '';
+      applyFilters();
+      if (searchInput) searchInput.focus();
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // Game details dialog
+  // --------------------------------------------------------------------------
+  function openDetails(gameId) {
+    const info = INFO.get(gameId);
+    if (!info || !detailsDialog) return;
+
+    detailsDialog.style.setProperty('--game-accent', info.accent || '');
+    const cover = byId('details-cover');
+    cover.src = info.cover;
+    cover.alt = info.alt;
+    byId('details-genre').textContent = info.genre;
+    byId('details-title').textContent = info.title;
+    byId('details-subtitle').textContent = info.subtitle;
+    byId('details-description').textContent = info.description;
+    fillTags(byId('details-tags'), info.tags);
+    const specs = byId('details-specs');
+    specs.replaceChildren(info.specs ? info.specs.cloneNode(true) : el('span'));
+
+    const play = byId('details-play');
+    play.href = info.file;
+    play.setAttribute('data-launch', gameId);
+    play.setAttribute('aria-label', `Play ${info.title}`);
+    const hotkey = byId('details-hotkey');
+    hotkey.textContent = info.hotkey;
+    hotkey.hidden = !info.hotkey;
+    const standalone = byId('details-standalone');
+    standalone.href = info.file;
+    standalone.setAttribute('aria-label', `Open ${info.title} as a standalone page`);
+
+    setSelectedGame(gameId, { silent: true });
+    pauseReasons.add('dialog');
+    updateRotation();
+
+    if (typeof detailsDialog.showModal === 'function') {
+      if (!detailsDialog.open) detailsDialog.showModal();
+    } else {
+      detailsDialog.setAttribute('open', '');
+    }
+    play.focus();
+  }
+
+  function closeDetails() {
+    if (!detailsDialog) return;
+    if (typeof detailsDialog.close === 'function') detailsDialog.close();
+    else detailsDialog.removeAttribute('open');
+  }
+
+  if (detailsDialog) {
+    detailsDialog.addEventListener('close', () => {
+      pauseReasons.delete('dialog');
+      updateRotation();
+    });
+    // Click on the backdrop (the dialog element itself, outside the inner panel)
+    detailsDialog.addEventListener('click', (event) => {
+      if (event.target === detailsDialog) closeDetails();
+    });
+    const closeDetailsBtn = byId('details-close');
+    if (closeDetailsBtn) closeDetailsBtn.addEventListener('click', closeDetails);
+  }
+
+  // --------------------------------------------------------------------------
+  // Theater
   // --------------------------------------------------------------------------
   function focusGameFrame() {
     if (!activeGameId) return;
     try {
       frame.focus();
-      if (frame.contentWindow) {
-        frame.contentWindow.focus();
-      }
+      if (frame.contentWindow) frame.contentWindow.focus();
     } catch (_) {
       // Ignore cross-context focus restrictions
     }
+  }
+
+  // Navigate by mounting a fresh iframe instead of changing `src`: a fresh
+  // frame's first navigation adds no joint session history entry, so the
+  // browser Back button closes the theater instead of stepping the iframe.
+  function mountFrame(url) {
+    const next = frame.cloneNode(false);
+    next.setAttribute('src', url);
+    next.addEventListener('load', onFrameLoad);
+    frame.replaceWith(next);
+    frame = next;
   }
 
   function updateSwitcher(gameId) {
     switcherBtns.forEach((btn) => {
       const isCurrent = btn.getAttribute('data-switch') === gameId;
       btn.setAttribute('aria-pressed', isCurrent ? 'true' : 'false');
+      // On narrow screens the switcher scrolls: keep the current game in view.
+      const bar = btn.parentElement;
+      if (isCurrent && bar && bar.scrollWidth > bar.clientWidth) {
+        const delta = btn.getBoundingClientRect().left - bar.getBoundingClientRect().left;
+        bar.scrollLeft += delta - (bar.clientWidth - btn.offsetWidth) / 2;
+      }
     });
   }
 
-  function openGame(gameId, options = { updateHash: true }) {
+  function setPageInert(inert) {
+    [siteHeader, mainEl, footerEl].forEach((node) => {
+      if (!node) return;
+      if (inert) node.setAttribute('inert', '');
+      else node.removeAttribute('inert');
+    });
+  }
+
+  function startLoading(message, info) {
+    loadingText.textContent = message;
+    if (info) {
+      loadingArt.style.backgroundImage = `url("${info.cover}")`;
+      loadingCover.src = info.cover;
+      loadingCover.alt = '';
+      loadingTip.textContent = `Controls: ${info.controls}`;
+      theater.style.setProperty('--game-accent', info.accent || '');
+    }
+    loading.classList.remove('is-hidden');
+    if (loadingAnim) loadingAnim.cancel();
+    loadingAnim = null;
+    if (typeof loadingBar.animate === 'function') {
+      // Eased "fake" progress that settles near the end until the frame loads.
+      loadingAnim = loadingBar.animate(
+        [{ transform: 'scaleX(0.04)' }, { transform: 'scaleX(0.6)', offset: 0.35 }, { transform: 'scaleX(0.92)' }],
+        { duration: 4200, easing: 'cubic-bezier(0.1, 0.7, 0.2, 1)', fill: 'forwards' }
+      );
+    }
+  }
+
+  function finishLoading() {
+    if (loadingAnim) loadingAnim.cancel();
+    loadingAnim = null;
+    if (typeof loadingBar.animate === 'function') {
+      loadingAnim = loadingBar.animate(
+        [{ transform: 'scaleX(0.92)' }, { transform: 'scaleX(1)' }],
+        { duration: 180, easing: 'ease-out', fill: 'forwards' }
+      );
+    }
+    loading.classList.add('is-hidden');
+  }
+
+  function openGame(gameId, options = {}) {
     const game = GAMES[gameId];
     if (!game) return;
+    const updateHash = options.updateHash !== false;
+    const info = INFO.get(gameId);
+    const wasOpen = Boolean(activeGameId);
 
-    if (!activeGameId) {
+    // Never start a game behind the modal details dialog (e.g. via Back/Forward).
+    // Closing it first also returns focus to its opener, which we remember below.
+    if (detailsDialog && detailsDialog.open) closeDetails();
+
+    if (!wasOpen) {
       lastTriggerEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const launchEl = lastTriggerEl && lastTriggerEl.closest('[data-launch]');
+      lastTriggerLaunch = launchEl
+        ? { id: launchEl.getAttribute('data-launch'), inContinue: Boolean(continueList && continueList.contains(launchEl)) }
+        : null;
     }
 
-    setSelectedGame(gameId, { silent: true });
-    playUiTone('launch');
+    setSelectedGame(gameId, { silent: true, animate: false });
+    if (!options.fromHistory) playUiTone('launch');
     recordPlay(gameId);
 
     activeGameId = gameId;
     titleEl.textContent = game.title;
-    if (controlsHintEl) {
-      controlsHintEl.textContent = game.controls;
-    }
+    if (controlsHintEl) controlsHintEl.textContent = game.controls;
+    if (thumbEl && info) thumbEl.src = info.cover;
     directLink.setAttribute('href', game.file);
     frame.setAttribute('title', `${game.title} — Game Viewport`);
     updateSwitcher(gameId);
+    startLoading(`Launching ${game.title}…`, info || { cover: '', controls: game.controls });
 
-    if (loadingText) {
-      loadingText.textContent = `Launching ${game.title}…`;
-    }
-    loading.classList.remove('is-hidden');
-
-    theater.classList.add('is-open');
-    theater.setAttribute('aria-hidden', 'false');
-    document.body.classList.add('theater-open');
-
-    if (options.updateHash && window.location.hash !== `#play=${gameId}`) {
-      window.history.pushState({ gameId }, '', `#play=${gameId}`);
+    if (!wasOpen) {
+      theater.classList.add('is-open');
+      theater.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('theater-open');
+      setPageInert(true);
+      pauseReasons.add('theater');
+      updateRotation();
+      closeBtn.focus({ preventScroll: true });
     }
 
-    frame.src = game.file;
+    // If our own Back is still in flight, its popstate will add this game's
+    // entry once it lands (see syncFromHash); pushing now would be undone.
+    if (updateHash && !pendingBack && window.location.hash !== `#play=${gameId}`) {
+      if (wasOpen) {
+        // Switching inside the theater replaces the entry so one Back exits.
+        const pushed = window.history.state && window.history.state[HISTORY_STATE_FLAG] === 'play';
+        window.history.replaceState({ [HISTORY_STATE_FLAG]: pushed ? 'play' : 'deeplink', gameId }, '', `#play=${gameId}`);
+      } else {
+        window.history.pushState({ [HISTORY_STATE_FLAG]: 'play', gameId }, '', `#play=${gameId}`);
+      }
+    }
+
+    mountFrame(game.file);
   }
 
-  function closeGame(options = { updateHash: true }) {
+  function closeGame(options = {}) {
     if (!activeGameId) return;
+    const updateHash = options.updateHash !== false;
 
-    playUiTone('back');
+    if (!options.fromHistory) playUiTone('back');
 
-    if (document.fullscreenElement) {
+    if (document.fullscreenElement && document.exitFullscreen) {
       document.exitFullscreen().catch(() => {});
     }
 
@@ -303,125 +953,227 @@
     theater.classList.remove('is-open');
     theater.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('theater-open');
+    setPageInert(false);
     updateSwitcher(null);
+    pauseReasons.delete('theater');
+    updateRotation();
 
     // Unload game so audio and animation loops stop cleanly
-    frame.src = 'about:blank';
+    mountFrame('about:blank');
+    if (loadingAnim) loadingAnim.cancel();
+    loadingAnim = null;
 
-    if (options.updateHash && window.location.hash.startsWith('#play=')) {
-      window.history.pushState({}, '', window.location.pathname + window.location.search);
+    if (updateHash && window.location.hash.startsWith('#play=')) {
+      const state = window.history.state;
+      if (state && state[HISTORY_STATE_FLAG] === 'play') {
+        // We pushed this entry: step back so Back/Forward stay intuitive.
+        pendingBack = true;
+        clearTimeout(pendingBackTimer);
+        pendingBackTimer = setTimeout(settlePendingBack, 1500); // in case popstate never comes
+        window.history.back();
+      } else {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
     }
 
-    if (lastTriggerEl && typeof lastTriggerEl.focus === 'function') {
+    if (lastTriggerEl && lastTriggerEl.isConnected && lastTriggerEl.offsetParent !== null && lastTriggerEl !== document.body) {
       lastTriggerEl.focus();
+    } else {
+      // The trigger may have been re-rendered (e.g. the "Continue playing" row).
+      const replacement = lastTriggerLaunch && lastTriggerLaunch.inContinue && continueList
+        ? continueList.querySelector(`[data-launch="${lastTriggerLaunch.id}"]`)
+        : null;
+      const card = cardById.get(selectedGameId);
+      const play = replacement || (card && !card.hidden ? card.querySelector('.btn-play') : spotlightPlay);
+      if (play) play.focus({ preventScroll: true });
     }
+    lastTriggerEl = null;
+    lastTriggerLaunch = null;
   }
 
-  frame.addEventListener('load', () => {
+  function onFrameLoad() {
     if (!activeGameId) return;
-    loading.classList.add('is-hidden');
+    finishLoading();
     focusGameFrame();
-  });
+  }
 
-  // Launch triggers on game cards
-  document.querySelectorAll('[data-launch]').forEach((el) => {
-    el.addEventListener('click', (event) => {
+  frame.addEventListener('load', onFrameLoad);
+
+  // Delegated handlers so cards, spotlight, details and "Continue" all work
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+
+    const launchEl = target.closest('[data-launch]');
+    if (launchEl) {
       if (
-        el.tagName === 'A' &&
+        launchEl.tagName === 'A' &&
         (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)
       ) {
         return;
       }
       event.preventDefault();
-      const gameId = el.getAttribute('data-launch');
-      openGame(gameId);
-    });
-  });
-
-  // Switcher buttons inside theater bar
-  switcherBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const targetId = btn.getAttribute('data-switch');
-      if (targetId && targetId !== activeGameId) {
-        openGame(targetId);
-      } else {
-        focusGameFrame();
+      const gameId = launchEl.getAttribute('data-launch');
+      if (detailsDialog && detailsDialog.open && detailsDialog.contains(launchEl)) {
+        closeDetails(); // restores focus to the opener before we remember it
       }
-    });
+      openGame(gameId);
+      return;
+    }
+
+    const detailsEl = target.closest('[data-details]');
+    if (detailsEl) {
+      event.preventDefault();
+      openDetails(detailsEl.getAttribute('data-details'));
+      return;
+    }
+
+    const switchEl = target.closest('[data-switch]');
+    if (switchEl) {
+      const targetId = switchEl.getAttribute('data-switch');
+      if (targetId && targetId !== activeGameId) openGame(targetId);
+      else focusGameFrame();
+    }
   });
 
   if (reloadBtn) {
     reloadBtn.addEventListener('click', () => {
       if (!activeGameId || !GAMES[activeGameId]) return;
       playUiTone('select');
-      if (loadingText) {
-        loadingText.textContent = `Restarting ${GAMES[activeGameId].title}…`;
-      }
-      loading.classList.remove('is-hidden');
-      frame.src = GAMES[activeGameId].file;
+      startLoading(`Restarting ${GAMES[activeGameId].title}…`, INFO.get(activeGameId));
+      mountFrame(GAMES[activeGameId].file);
     });
   }
 
   closeBtn.addEventListener('click', () => closeGame());
 
+  const fullscreenSupported = Boolean(stage.requestFullscreen || theater.requestFullscreen) && document.fullscreenEnabled !== false;
+  if (!fullscreenSupported) fullscreenBtn.hidden = true;
+
   fullscreenBtn.addEventListener('click', () => {
     if (!document.fullscreenElement) {
       const target = stage.requestFullscreen ? stage : theater;
-      if (target.requestFullscreen) {
-        target.requestFullscreen().then(focusGameFrame).catch(() => {});
-      }
+      if (target.requestFullscreen) target.requestFullscreen().then(focusGameFrame).catch(() => {});
     } else if (document.exitFullscreen) {
       document.exitFullscreen().then(focusGameFrame).catch(() => {});
     }
   });
 
-  // Console-style keyboard browsing on the launcher screen
+  document.addEventListener('fullscreenchange', () => {
+    const isFull = Boolean(document.fullscreenElement);
+    theater.classList.toggle('is-fullscreen', isFull);
+    fullscreenBtn.setAttribute('aria-label', isFull ? 'Exit fullscreen' : 'Enter fullscreen');
+  });
+
+  // --------------------------------------------------------------------------
+  // Console-style keyboard control
+  // --------------------------------------------------------------------------
   window.addEventListener('keydown', (event) => {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    const tag = event.target && event.target.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
 
-    if (!activeGameId) {
-      if (event.key === '1' || event.key === '2' || event.key === '3' || event.key === '4') {
-        openGame(GAME_KEYS[Number(event.key) - 1]);
-        return;
-      }
+    // The native modal dialog handles Escape itself; it always goes first.
+    if (detailsDialog && detailsDialog.open) return;
 
-      if (event.key === 'ArrowRight') {
+    if (activeGameId) {
+      // Keys only reach us when focus is on the portal chrome, not in the game.
+      if (event.key === 'Escape') {
         event.preventDefault();
-        const nextIdx = (GAME_KEYS.indexOf(selectedGameId) + 1) % GAME_KEYS.length;
-        setSelectedGame(GAME_KEYS[nextIdx]);
-        return;
+        closeGame();
       }
+      return;
+    }
 
-      if (event.key === 'ArrowLeft') {
+    const target = event.target;
+    const tag = target && target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (target && target.isContentEditable)) {
+      if (event.key === 'Escape' && target === searchInput && searchInput.value) {
+        searchInput.value = '';
+        searchQuery = '';
+        applyFilters();
+      }
+      return;
+    }
+
+    if (event.key === '/' && searchInput) {
+      event.preventDefault();
+      searchInput.focus();
+      return;
+    }
+
+    if (/^[1-9]$/.test(event.key)) {
+      const gameId = GAME_KEYS[Number(event.key) - 1];
+      if (gameId && GAMES[gameId]) {
         event.preventDefault();
-        const prevIdx = (GAME_KEYS.indexOf(selectedGameId) - 1 + GAME_KEYS.length) % GAME_KEYS.length;
-        setSelectedGame(GAME_KEYS[prevIdx]);
-        return;
+        openGame(gameId);
       }
+      return;
+    }
 
-      if (event.key === 'Enter') {
-        // Avoid double-triggering if focus is already on a button or link
-        if (tag !== 'BUTTON' && tag !== 'A') {
-          event.preventDefault();
-          openGame(selectedGameId);
-        }
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      event.preventDefault();
+      const nextId = nextGameId(selectedGameId, event.key === 'ArrowRight' ? 1 : -1);
+      const active = document.activeElement;
+      setSelectedGame(nextId, { announce: Boolean(active && railList && railList.contains(active)) });
+      // Keep keyboard focus with the selection when it lives in the grid/rail.
+      if (active && grid && grid.contains(active)) {
+        const play = cardById.get(nextId) && cardById.get(nextId).querySelector('.btn-play');
+        if (play) play.focus();
+      } else if (active && railList && railList.contains(active)) {
+        const thumb = railThumbs.get(nextId);
+        if (thumb) thumb.focus();
       }
+      return;
+    }
+
+    if (event.key === 'Enter' && tag !== 'BUTTON' && tag !== 'A') {
+      event.preventDefault();
+      openGame(selectedGameId);
     }
   });
 
-  // Sync with browser Back/Forward navigation and deep links (#play=<slug>)
+  // --------------------------------------------------------------------------
+  // Header: glass bar once the page scrolls
+  // --------------------------------------------------------------------------
+  const sentinel = byId('scroll-sentinel');
+  if (siteHeader && sentinel && 'IntersectionObserver' in window) {
+    new IntersectionObserver(([entry]) => {
+      siteHeader.classList.toggle('is-scrolled', !entry.isIntersecting);
+    }).observe(sentinel);
+  }
+
+  // --------------------------------------------------------------------------
+  // Init + Back/Forward sync with deep links (#play=<slug>)
+  // --------------------------------------------------------------------------
+  // Our history.back() has landed (or timed out). If a game was opened in the
+  // meantime, keep it open and give it its own entry instead of closing it.
+  function settlePendingBack() {
+    if (!pendingBack) return false;
+    pendingBack = false;
+    clearTimeout(pendingBackTimer);
+    if (activeGameId) {
+      if (window.location.hash !== `#play=${activeGameId}`) {
+        window.history.pushState({ [HISTORY_STATE_FLAG]: 'play', gameId: activeGameId }, '', `#play=${activeGameId}`);
+      }
+      return true;
+    }
+    return false;
+  }
+
   function syncFromHash() {
+    if (settlePendingBack()) return;
     const match = window.location.hash.match(/^#play=([a-z0-9-]+)$/i);
     if (match && GAMES[match[1]]) {
-      if (activeGameId !== match[1]) {
-        openGame(match[1], { updateHash: false });
-      }
+      if (activeGameId !== match[1]) openGame(match[1], { updateHash: false, fromHistory: true });
     } else if (activeGameId) {
-      closeGame({ updateHash: false });
+      closeGame({ updateHash: false, fromHistory: true });
     }
   }
+
+  buildRail();
+  renderSpotlight(selectedGameId, false);
+  renderPlayHistory();
+  applyFilters();
+  updateRotation();
 
   window.addEventListener('hashchange', syncFromHash);
   window.addEventListener('popstate', syncFromHash);

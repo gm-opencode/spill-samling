@@ -25,9 +25,10 @@ This file can't change the main session's own model or effort. The user sets tho
 ## Architecture
 
 **Portal (`index.html` + `app.js` + `styles.css`)**: a single-page launcher. `app.js` is one IIFE with no dependencies. It handles:
-- **Card selection and ambient backdrop.** Hovering, focusing, or using arrow keys on a `.game-card[data-game]` toggles `.is-selected` on the card and `.is-active` on the matching `.ambient-layer[data-ambient]`.
-- **Theater.** Elements with `[data-launch]` open the game in `#theater-frame` (an iframe) and set the URL hash to `#play=<slug>`. `syncFromHash` keeps Back/Forward and deep links in sync. Closing the theater sets the iframe to `about:blank` so the game's audio and render loops stop.
-- **Keyboard shortcuts.** Keys `1`–`4` launch games by their index in `GAME_KEYS`.
+- **Card selection and ambient backdrop.** Hovering, focusing, or using arrow keys on a `.game-card[data-game]` toggles `.is-selected` on the card and `.is-active` on the matching `.ambient-layer[data-ambient]`. The selection also drives the spotlight.
+- **Spotlight, library, details.** The hero spotlight (with an auto-rotating "Up next" rail, pausable and off under reduced motion), the genre filter chips and search, the "Continue playing" row, and the details `<dialog>` are all built from the game cards' markup.
+- **Theater.** Elements with `[data-launch]` open the game in `#theater-frame` (an iframe) and set the URL hash to `#play=<slug>`. `syncFromHash` keeps Back/Forward and deep links in sync. Every launch, switch, and restart mounts a fresh iframe (`mountFrame`) so iframe navigations never add browser history entries; closing mounts an `about:blank` iframe so the game's audio and render loops stop. Closing calls `history.back()` when the portal pushed the `#play` entry (`history.state.opengames === 'play'`), otherwise `replaceState` clears the hash.
+- **Keyboard shortcuts.** Keys `1`–`9` launch games by their index in `GAME_KEYS` (`0` is not used). Arrows move the selection, Enter plays it, `/` focuses search, and Escape closes the theater when focus is on the portal chrome.
 - **UI sound effects.** These are synthesized with Web Audio, not loaded from files.
 - **`localStorage` keys.** `opengames_ui_sfx` and `opengames_played_history` drive the Played/Last Played badges.
 
@@ -41,10 +42,13 @@ This file can't change the main session's own model or effort. The user sets tho
 ## Adding or renaming a game
 
 A game's slug (e.g. `nova-vanguard`) is hard-coded in several places that must stay in sync:
-1. `app.js`: the `GAMES` map (title, file path, controls hint) and the `GAME_KEYS` order, which sets both the arrow-key order and the `1`–`N` hotkeys. The hotkey check in the `keydown` handler lists `'1'`–`'4'` explicitly.
+1. `app.js`: the `GAMES` map (title, file path, controls hint) and the `GAME_KEYS` order, which sets the arrow-key order, the spotlight rotation order, and the `1`–`9` hotkeys (the `keydown` handler maps digits `1`–`9` to `GAME_KEYS` indexes 0–8).
 2. `index.html`:
    - an `.ambient-layer` with `data-ambient`
-   - a `.game-card` with `data-game`, `data-launch`, and `data-recent-label`
+   - a `.game-card` with `data-game`, `data-genres` (space-separated keys matched by the `data-filter` chips; add a chip for a new genre), a `--game-accent` colour in its `style`, `data-launch` on the cover and Play links, a `data-details` button, and `data-recent-label`. The spotlight, its rail, the details dialog, the "Continue playing" row, and search all read their copy from this card's `.card-genre`, `.card-subtitle`, `.card-description`, `.card-tags`, `.card-specs`, and cover `<img>`, so keep those filled in.
+   - the per-position hotkey digits, which must match `GAME_KEYS` order: the `<kbd class="card-slot">` in each card, and the `.switcher-key` span in each switcher button
    - a theater switcher button with `data-switch`
-   - the `<meta>` description and Open Graph text, which name every game
-3. `assets/<slug>.jpg` for the cover art, used by both the card and the ambient backdrop.
+   - the footer quick-launch keys and the library keyboard hint (`1`–`N`)
+   - markup that mirrors `GAME_KEYS[0]` before JS runs: the static spotlight content (art, title, copy, tags, Play/Details targets), the details dialog's default cover and Play/standalone links, and the `og:image`/`twitter:image`
+   - the `<meta>` description and Open Graph/Twitter text, which name every game
+3. `assets/<slug>.jpg` for the cover art (1280×714), used by the card, spotlight, theater loader, and ambient backdrop.
