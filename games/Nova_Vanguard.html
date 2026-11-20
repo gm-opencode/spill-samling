@@ -758,8 +758,10 @@ kbd.nv-key {
 @keyframes lowHullPulse { 0%, 100% { opacity: 0.18; } 50% { opacity: 0.55; } }
 
 /* Audio gate: visible in every mode until the AudioContext is truly running */
+/* The global #audio-gate replaces the old title-only hint */
+#audio-unlock-hint { display: none !important; }
 #audio-gate {
-  position: fixed; left: 50%; top: 64px; transform: translateX(-50%); z-index: 40;
+  position: fixed; left: 50%; top: 92px; transform: translateX(-50%); z-index: 40;
   display: none; align-items: center; gap: 0.7em;
   padding: 0.62em 1.15em; pointer-events: auto; cursor: pointer;
   background: rgba(30, 20, 4, 0.92); border: 1px solid rgba(245, 166, 35, 0.85);
@@ -1942,6 +1944,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
     // Must be called synchronously from a user-gesture handler.
     unlock() {
+      if (!this.isUnlocked()) this._lastUnlockGestureAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       // A context that failed to reach 'running' after a previous gesture is discarded and rebuilt inside this gesture.
       if (this.ctx && this.ctx.state !== 'running' && (this._needsRecreate || this.ctx.state === 'closed') && this._recreateCount < 6) {
         this._recreate();
@@ -1988,6 +1991,10 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       this.ufoOsc = null; this.ufoLfo = null; this.ufoGain = null; this.ufoPanner = null;
       this._longVoices = [];
       this._sfxEnds = [];
+      this._lastSfxAt = {};
+      this._recentBooms = 0;
+      this._recentBoomAt = 0;
+      this.nextNoteTime = 0;
       this.ctx = null;
       if (old) {
         try { old.onstatechange = null; } catch (_) {}
@@ -1998,6 +2005,12 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
     isUnlocked() {
       return !!(this.ctx && this.ctx.state === 'running');
+    },
+
+    // True right after the gesture that first enabled sound (so an "audio" button click doesn't immediately mute it again)
+    justUnlocked() {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      return this._lastUnlockGestureAt !== undefined && now - this._lastUnlockGestureAt < 900;
     },
 
     // 'running' | 'locked' (needs a click/key) | 'unsupported'
@@ -2045,7 +2058,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     _rateOk(key, minGapSec) {
       const now = this._now();
       const prev = this._lastSfxAt[key];
-      if (prev !== undefined && now - prev < minGapSec) return false;
+      if (prev !== undefined && now >= prev && now - prev < minGapSec) return false;
       this._lastSfxAt[key] = now;
       return true;
     },
@@ -2053,7 +2066,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     // Voice budget: drop low-priority SFX when too many are already sounding.
     _budget(dur, priority = 1) {
       const now = this._now();
-      if (this._sfxEnds.length > 24) this._sfxEnds = this._sfxEnds.filter((e) => e > now);
+      if (this._sfxEnds.length > 6) this._sfxEnds = this._sfxEnds.filter((e) => e > now && e < now + 10);
       const active = this._sfxEnds.length;
       if (priority <= 0 && active > 18) return false;
       if (priority === 1 && active > 30) return false;
@@ -2819,8 +2832,6 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         lfo.connect(lg);
         lg.connect(o1.detune);
         lg.connect(o2.detune);
-        lfo.start(t);
-        lfo.stop(t + d + 0.03);
         srcs.push(lfo);
       }
       this._route(g, this.leadBus, o.pan || 0, o.rev != null ? o.rev : 0.25, o.dly != null ? o.dly : 0.28);
@@ -3212,7 +3223,13 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       let guard = 0;
       while (this.nextNoteTime < now + lookahead && guard++ < 12) {
         const stepDur = 60 / Math.max(40, this.song.bpm || TRACKS[this.musicMode].bpm) / 4;
-        this._scheduleStep(this.nextNoteTime, stepDur);
+        try {
+          this._scheduleStep(this.nextNoteTime, stepDur);
+        } catch (err) {
+          // A music glitch must never take down the game loop
+          if (!this._warned) { this._warned = true; try { console.warn('NV music step failed', err); } catch (_) {} }
+          this.song.s16 = (this.song.s16 + 1) % 16;
+        }
         // bpm may have been updated on the bar line inside _scheduleStep
         this.nextNoteTime += 60 / Math.max(40, this.song.bpm) / 4;
       }
@@ -4775,8 +4792,29 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       scene.add(this.hemiLight, this.sunLight, this.rimLight, this.lightningLight);
 
       this._buildStarfield();
+      this._buildDust();
       this._buildWarpStreaks();
       this._buildArenaGuides();
+    },
+
+    // Near-field space dust: fast parallax layer that sells forward motion over the arena
+    _buildDust() {
+      const count = 260;
+      const pos = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        pos[i * 3] = (Math.random() - 0.5) * 70;
+        pos[i * 3 + 1] = -3 + Math.random() * 16;
+        pos[i * 3 + 2] = -60 + Math.random() * 95;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const mat = new THREE.PointsMaterial({
+        size: 0.32, map: NV.Assets.textures.glow, color: 0x9fdcff, transparent: true, opacity: 0.55,
+        blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
+      });
+      this.dust = new THREE.Points(geo, mat);
+      this.dust.frustumCulled = false;
+      this.starGroup.add(this.dust);
     },
 
     _buildStarfield() {
@@ -5450,6 +5488,17 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       }
       pos.needsUpdate = true;
 
+      if (this.dust) {
+        const dp = this.dust.geometry.attributes.position;
+        const ds = 16 + this.warpIntensity * 260;
+        for (let i = 0; i < dp.count; i++) {
+          let z = dp.getZ(i) + ds * dt;
+          if (z > 35) z -= 95;
+          dp.setZ(i, z);
+        }
+        dp.needsUpdate = true;
+      }
+
       if (this.warpLines && this.warpLines.group.visible) {
         const wSpeed = 160 * this.warpIntensity;
         for (let i = 0; i < this.warpLines.lines.length; i++) {
@@ -5707,7 +5756,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         e.z = z;
         if (e.mesh) {
           e.mesh.position.set(x, 0, z);
-          e.mesh.scale.setScalar(1);
+          e.mesh.scale.setScalar(e.elite ? 1.15 : 1);
           e.mesh.rotation.set(0, 0, 0);
         }
       });
@@ -5754,7 +5803,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           lerp(13, 0, eased),
           lerp(z - 22, z, eased)
         );
-        e.mesh.scale.setScalar(Math.max(0.01, eased));
+        e.mesh.scale.setScalar(Math.max(0.01, eased) * (e.elite ? 1.15 : 1));
         e.mesh.rotation.x = (1 - eased) * 0.45;
       });
     },
@@ -6078,6 +6127,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
   'use strict';
 
   const STORAGE_KEY = 'nova_vanguard_save_v1';
+  const SETTINGS_KEY = 'nova_vanguard_settings_v1';
+  const DEFAULT_SETTINGS = { musicVol: 0.8, sfxVol: 0.85, quality: 'auto', shake: 1 };
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -6107,6 +6158,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
     // Persistent save
     save: { highScore: 0, clearedStages: [] },
+    settings: Object.assign({}, DEFAULT_SETTINGS),
 
     // Live campaign state
     state: null,
@@ -6136,17 +6188,22 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
     boot() {
       this._loadSave();
+      this._loadSettings();
       this._cacheDom();
       this._initThree();
       NV.Assets.init();
       NV.Env.init(this.scene);
       NV.Cinema.init();
-      NV.Audio.init();
+      NV.Audio.init(); // binds gesture listeners only; the AudioContext is created inside the first click/key
+      NV.Audio.setVolumes(this.settings.musicVol, this.settings.sfxVol);
 
       this._bindEvents();
       this._renderShipCards();
       this._selectShip(this.selectedShipId, true);
       this._updateMetaChips();
+      this._applyQuality();
+      this._renderSettings();
+      this._syncAudioUi();
       this._enterTitle();
 
       this.lastTime = performance.now();
@@ -6162,6 +6219,29 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           this.save.clearedStages = Array.isArray(parsed.clearedStages) ? parsed.clearedStages : [];
         }
       } catch (_) {}
+    },
+
+    _loadSettings() {
+      try {
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if (raw) {
+          const p = JSON.parse(raw) || {};
+          const num = (v, d) => (typeof v === 'number' && isFinite(v) ? clamp(v, 0, 1) : d);
+          this.settings.musicVol = num(p.musicVol, DEFAULT_SETTINGS.musicVol);
+          this.settings.sfxVol = num(p.sfxVol, DEFAULT_SETTINGS.sfxVol);
+          this.settings.quality = ['auto', 'high', 'low'].includes(p.quality) ? p.quality : 'auto';
+          this.settings.shake = [0, 0.5, 1].includes(p.shake) ? p.shake : 1;
+          // Never let a stored preference silently leave the game mute: both sliders at ~0 resets to defaults.
+          if (this.settings.musicVol < 0.05 && this.settings.sfxVol < 0.05) {
+            this.settings.musicVol = DEFAULT_SETTINGS.musicVol;
+            this.settings.sfxVol = DEFAULT_SETTINGS.sfxVol;
+          }
+        }
+      } catch (_) {}
+    },
+
+    _writeSettings() {
+      try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings)); } catch (_) {}
     },
 
     _writeSave() {
@@ -6203,6 +6283,15 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         btnMute: $('btn-mute'),
         btnTitleAudio: $('btn-title-audio'),
         audioUnlockHint: $('audio-unlock-hint'),
+        audioGate: $('audio-gate'),
+        fxDamage: $('fx-damage'),
+        modalSettings: $('modal-settings'),
+        setMusic: $('set-music'),
+        setMusicVal: $('set-music-val'),
+        setSfx: $('set-sfx'),
+        setSfxVal: $('set-sfx-val'),
+        setQuality: $('set-quality'),
+        setShake: $('set-shake'),
         btnPause: $('btn-pause'),
         shipTabs: $('ship-tabs'),
         shipDetailName: $('ship-detail-name'),
@@ -6256,6 +6345,172 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         e.preventDefault();
         if (this.mode === 'playing') this._togglePause(true);
       });
+
+      this._initPost();
+    },
+
+    // ==================== POST-PROCESSING: lightweight HDR bloom (no external files) ====================
+    _initPost() {
+      const isWebGL2 = !!(this.renderer.capabilities && this.renderer.capabilities.isWebGL2);
+      const hf = THREE.HalfFloatType;
+      const mkRT = (w, h, samples = 0) => new THREE.WebGLRenderTarget(w, h, {
+        type: hf, depthBuffer: samples > 0 || w > 0, stencilBuffer: false, samples: isWebGL2 ? samples : 0,
+        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      });
+      const vert = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
+      const bright = new THREE.ShaderMaterial({
+        uniforms: { tDiffuse: { value: null }, texel: { value: new THREE.Vector2() }, threshold: { value: 1.45 }, knee: { value: 0.5 } },
+        vertexShader: vert,
+        fragmentShader: [
+          'uniform sampler2D tDiffuse; uniform vec2 texel; uniform float threshold; uniform float knee; varying vec2 vUv;',
+          'vec3 pick(vec2 uv) { vec3 c = texture2D(tDiffuse, uv).rgb; float l = max(c.r, max(c.g, c.b));',
+          '  float soft = clamp(l - threshold + knee, 0.0, 2.0 * knee); soft = soft * soft / (4.0 * knee + 1e-4);',
+          '  return c * (max(soft, l - threshold) / max(l, 1e-4)); }',
+          'void main() { vec2 o = texel * 0.5;',
+          '  vec3 c = pick(vUv + vec2(-o.x, -o.y)) + pick(vUv + vec2(o.x, -o.y)) + pick(vUv + vec2(-o.x, o.y)) + pick(vUv + vec2(o.x, o.y));',
+          '  gl_FragColor = vec4(min(c * 0.25, vec3(24.0)), 1.0); }',
+        ].join('\n'),
+        depthTest: false, depthWrite: false, toneMapped: false,
+      });
+      const blur = new THREE.ShaderMaterial({
+        uniforms: { tDiffuse: { value: null }, dir: { value: new THREE.Vector2() } },
+        vertexShader: vert,
+        fragmentShader: [
+          'uniform sampler2D tDiffuse; uniform vec2 dir; varying vec2 vUv;',
+          'void main() {',
+          '  vec3 c = texture2D(tDiffuse, vUv).rgb * 0.2270270270;',
+          '  c += texture2D(tDiffuse, vUv + dir * 1.3846153846).rgb * 0.3162162162;',
+          '  c += texture2D(tDiffuse, vUv - dir * 1.3846153846).rgb * 0.3162162162;',
+          '  c += texture2D(tDiffuse, vUv + dir * 3.2307692308).rgb * 0.0702702703;',
+          '  c += texture2D(tDiffuse, vUv - dir * 3.2307692308).rgb * 0.0702702703;',
+          '  gl_FragColor = vec4(c, 1.0); }',
+        ].join('\n'),
+        depthTest: false, depthWrite: false, toneMapped: false,
+      });
+      const composite = new THREE.ShaderMaterial({
+        uniforms: {
+          tScene: { value: null }, tBloomA: { value: null }, tBloomB: { value: null },
+          strength: { value: 0.85 }, aberr: { value: 0.0 },
+        },
+        vertexShader: vert,
+        fragmentShader: [
+          'uniform sampler2D tScene; uniform sampler2D tBloomA; uniform sampler2D tBloomB; uniform float strength; uniform float aberr; varying vec2 vUv;',
+          'void main() {',
+          '  vec2 d = (vUv - 0.5) * aberr;',
+          '  vec3 c = vec3(texture2D(tScene, vUv + d).r, texture2D(tScene, vUv).g, texture2D(tScene, vUv - d).b);',
+          '  vec3 b = texture2D(tBloomA, vUv).rgb * 0.55 + texture2D(tBloomB, vUv).rgb * 0.9;',
+          '  gl_FragColor = vec4(c + b * strength, 1.0);',
+          '  #include <tonemapping_fragment>',
+          '  #include <colorspace_fragment>',
+          '}',
+        ].join('\n'),
+        depthTest: false, depthWrite: false,
+      });
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), composite);
+      quad.frustumCulled = false;
+      const scene = new THREE.Scene();
+      scene.add(quad);
+      this.post = {
+        enabled: false,
+        rtScene: mkRT(4, 4, 4), rtA: mkRT(2, 2), rtB: mkRT(2, 2), rtC: mkRT(1, 1), rtD: mkRT(1, 1),
+        bright, blur, composite, quad, scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1),
+        size: new THREE.Vector2(), aberr: 0,
+      };
+      [this.post.rtA, this.post.rtB, this.post.rtC, this.post.rtD].forEach((rt) => { rt.depthBuffer = false; });
+    },
+
+    _resizePost() {
+      if (!this.post) return;
+      const v = this.renderer.getDrawingBufferSize(this.post.size);
+      const w = Math.max(2, Math.floor(v.x)), h = Math.max(2, Math.floor(v.y));
+      this.post.rtScene.setSize(w, h);
+      this.post.rtA.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
+      this.post.rtB.setSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
+      this.post.rtC.setSize(Math.max(1, w >> 2), Math.max(1, h >> 2));
+      this.post.rtD.setSize(Math.max(1, w >> 2), Math.max(1, h >> 2));
+    },
+
+    // quality: 'auto' | 'high' | 'low'. Auto starts high and may drop to low once if frames are slow.
+    _applyQuality() {
+      if (!this.renderer) return;
+      const q = this.settings.quality === 'auto' ? (this._autoLow ? 'low' : 'high') : this.settings.quality;
+      this.effectiveQuality = q;
+      const dpr = window.devicePixelRatio || 1;
+      this.renderer.setPixelRatio(q === 'high' ? Math.min(dpr, 1.75) : Math.min(dpr, 1));
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      if (this.post) {
+        this.post.enabled = q === 'high';
+        this._resizePost();
+      }
+      this.maxParticles = q === 'high' ? 520 : 240;
+      this._perf = { t: 0, frames: 0, slow: 0 };
+    },
+
+    _blit(mat, target) {
+      const P = this.post;
+      P.quad.material = mat;
+      this.renderer.setRenderTarget(target);
+      this.renderer.render(P.scene, P.cam);
+    },
+
+    _render() {
+      const P = this.post;
+      const r = this.renderer;
+      if (!P || !P.enabled) {
+        r.setRenderTarget(null);
+        r.render(this.scene, this.camera);
+        return;
+      }
+      r.setRenderTarget(P.rtScene);
+      r.render(this.scene, this.camera);
+      // bright pass -> half res
+      P.bright.uniforms.tDiffuse.value = P.rtScene.texture;
+      P.bright.uniforms.texel.value.set(1 / P.rtScene.width, 1 / P.rtScene.height);
+      this._blit(P.bright, P.rtA);
+      // tight blur at 1/2
+      P.blur.uniforms.tDiffuse.value = P.rtA.texture;
+      P.blur.uniforms.dir.value.set(1 / P.rtA.width, 0);
+      this._blit(P.blur, P.rtB);
+      P.blur.uniforms.tDiffuse.value = P.rtB.texture;
+      P.blur.uniforms.dir.value.set(0, 1 / P.rtB.height);
+      this._blit(P.blur, P.rtA);
+      // wide blur at 1/4 (two iterations)
+      P.blur.uniforms.tDiffuse.value = P.rtA.texture;
+      P.blur.uniforms.dir.value.set(1.5 / P.rtA.width, 0);
+      this._blit(P.blur, P.rtC);
+      P.blur.uniforms.tDiffuse.value = P.rtC.texture;
+      P.blur.uniforms.dir.value.set(0, 1.5 / P.rtC.height);
+      this._blit(P.blur, P.rtD);
+      P.blur.uniforms.tDiffuse.value = P.rtD.texture;
+      P.blur.uniforms.dir.value.set(2.5 / P.rtD.width, 0);
+      this._blit(P.blur, P.rtC);
+      P.blur.uniforms.tDiffuse.value = P.rtC.texture;
+      P.blur.uniforms.dir.value.set(0, 2.5 / P.rtC.height);
+      this._blit(P.blur, P.rtD);
+      // composite + tone mapping + sRGB to screen
+      P.composite.uniforms.tScene.value = P.rtScene.texture;
+      P.composite.uniforms.tBloomA.value = P.rtA.texture;
+      P.composite.uniforms.tBloomB.value = P.rtD.texture;
+      P.composite.uniforms.aberr.value = P.aberr;
+      this._blit(P.composite, null);
+    },
+
+    // Auto quality: if the frame rate stays low while playing, drop to Low once.
+    _trackPerf(rawDt) {
+      if (this.settings.quality !== 'auto' || this._autoLow || this.mode !== 'playing' || !this._perf) return;
+      if (document.hidden) return;
+      const pf = this._perf;
+      pf.t += rawDt; pf.frames++;
+      if (pf.t >= 2.5) {
+        const fps = pf.frames / pf.t;
+        pf.slow = fps < 40 ? pf.slow + 1 : 0;
+        pf.t = 0; pf.frames = 0;
+        if (pf.slow >= 2) {
+          this._autoLow = true;
+          this._applyQuality();
+          this._showToast('GRAPHICS: LOW (AUTO) — CHANGE IN SETTINGS');
+        }
+      }
     },
 
     _bindEvents() {
@@ -6263,18 +6518,34 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         this.camera.aspect = window.innerWidth / window.innerHeight;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this._resizePost();
       });
 
+      // NV.Audio binds its own capture-phase gesture listeners (click/pointerup/mouseup/touchend/key*),
+      // so this only has to be called from handlers that are themselves user gestures.
       const unlockAudio = () => {
-        NV.Audio.init();
         if (NV.Audio.unlock) NV.Audio.unlock();
-        if (this.dom.audioUnlockHint && NV.Audio.ctx && NV.Audio.ctx.state === 'running') {
-          this.dom.audioUnlockHint.classList.add('is-unlocked');
-        }
+        this._syncAudioUi();
       };
-      ['pointerdown', 'mousedown', 'click', 'keydown', 'touchstart'].forEach(evt => {
-        window.addEventListener(evt, unlockAudio, { capture: true, passive: true });
-      });
+      window.addEventListener('nv-audio-state', () => this._syncAudioUi());
+      if (this.dom.audioGate) {
+        this.dom.audioGate.addEventListener('click', () => {
+          unlockAudio();
+          if (NV.Audio.muted) this._toggleMute();
+          NV.Audio.playUiClick(true);
+        });
+      }
+
+      // Inside the portal iframe: take keyboard focus so key presses (and the keydown audio unlock) reach the game.
+      const grabFocus = () => {
+        try { if (document.hasFocus && !document.hasFocus()) window.focus(); } catch (_) {}
+      };
+      if (window.parent !== window) {
+        grabFocus();
+        window.addEventListener('load', grabFocus);
+        document.addEventListener('pointerenter', grabFocus, true);
+        document.documentElement.addEventListener('mouseenter', grabFocus);
+      }
 
       window.addEventListener('keydown', (e) => {
         const code = e.code;
@@ -6287,6 +6558,10 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           NV.Cinema.skip();
           return;
         }
+        if (code === 'Escape' && this.dom.modalSettings.classList.contains('is-active')) {
+          this._closeSettings();
+          return;
+        }
         if (code === 'KeyP' || code === 'Escape') {
           if (this.mode === 'playing') this._togglePause(true);
           else if (this.mode === 'paused') this._togglePause(false);
@@ -6294,7 +6569,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           return;
         }
         if (code === 'KeyM') {
-          this._toggleMute();
+          if (!NV.Audio.justUnlocked()) this._toggleMute();
+          this._syncAudioUi();
           return;
         }
         if (this.mode === 'playing') {
@@ -6336,8 +6612,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       if (this.dom.btnTitleAudio) {
         this.dom.btnTitleAudio.addEventListener('click', () => {
           unlockAudio();
-          this._toggleMute();
+          if (!NV.Audio.justUnlocked()) this._toggleMute();
           if (!NV.Audio.muted) NV.Audio.playUiClick(true);
+          this._syncAudioUi();
         });
       }
       if (this.dom.audioUnlockHint) {
@@ -6348,6 +6625,46 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         });
       }
 
+      // Settings
+      const btnTS = document.getElementById('btn-title-settings');
+      if (btnTS) btnTS.addEventListener('click', () => { NV.Audio.playUiClick(); this._openSettings(); });
+      const btnPS = document.getElementById('btn-pause-settings');
+      if (btnPS) btnPS.addEventListener('click', () => { NV.Audio.playUiClick(); this._openSettings(); });
+      document.getElementById('btn-settings-close').addEventListener('click', () => { NV.Audio.playUiClick(); this._closeSettings(); });
+      document.getElementById('btn-settings-test').addEventListener('click', () => {
+        unlockAudio();
+        if (NV.Audio.muted) this._toggleMute();
+        NV.Audio.playExplosion(1.2, -0.5);
+        setTimeout(() => NV.Audio.playPowerup('nova'), 350);
+      });
+      const onVol = () => {
+        this.settings.musicVol = clamp(Number(this.dom.setMusic.value) / 100, 0, 1);
+        this.settings.sfxVol = clamp(Number(this.dom.setSfx.value) / 100, 0, 1);
+        NV.Audio.setVolumes(this.settings.musicVol, this.settings.sfxVol);
+        this._renderSettings();
+        this._writeSettings();
+      };
+      this.dom.setMusic.addEventListener('input', onVol);
+      this.dom.setSfx.addEventListener('input', onVol);
+      this.dom.setSfx.addEventListener('change', () => NV.Audio.playHit(false, 0));
+      this.dom.setQuality.addEventListener('click', (e) => {
+        const b = e.target.closest('.seg-btn');
+        if (!b) return;
+        this.settings.quality = b.dataset.val;
+        this._applyQuality();
+        this._renderSettings();
+        this._writeSettings();
+        NV.Audio.playUiClick();
+      });
+      this.dom.setShake.addEventListener('click', (e) => {
+        const b = e.target.closest('.seg-btn');
+        if (!b) return;
+        this.settings.shake = Number(b.dataset.val);
+        this._renderSettings();
+        this._writeSettings();
+        NV.Audio.playUiClick();
+      });
+
       // Cinema skip button
       document.getElementById('cinema-skip-btn').addEventListener('click', () => NV.Cinema.skip());
 
@@ -6355,7 +6672,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       this.dom.btnAutofire.addEventListener('click', () => this._toggleAutoFire());
       this.dom.btnMute.addEventListener('click', () => {
         unlockAudio();
-        this._toggleMute();
+        if (!NV.Audio.justUnlocked()) this._toggleMute();
+        this._syncAudioUi();
       });
       this.dom.btnPause.addEventListener('click', () => {
         if (this.mode === 'playing') this._togglePause(true);
@@ -6492,35 +6810,80 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     },
 
     _toggleMute() {
-      const m = NV.Audio.toggleMute();
-      const txt = m ? 'AUDIO: OFF' : 'AUDIO: ON';
-      if (this.dom.btnMute) {
-        this.dom.btnMute.textContent = txt;
-        this.dom.btnMute.classList.toggle('is-on', !m);
+      NV.Audio.toggleMute();
+      this._syncAudioUi();
+    },
+
+    // Keeps every audio indicator consistent with the real AudioContext state + mute flag.
+    _syncAudioUi() {
+      const A = NV.Audio;
+      const status = A.getStatus ? A.getStatus() : (A.isUnlocked() ? 'running' : 'locked');
+      const muted = !!A.muted;
+      const locked = status === 'locked';
+      const txt = muted ? 'AUDIO: OFF' : (locked ? 'AUDIO: CLICK TO ENABLE' : 'AUDIO: ON');
+      [this.dom.btnMute, this.dom.btnTitleAudio].forEach((b) => {
+        if (!b) return;
+        if (b.textContent !== txt) b.textContent = txt;
+        b.classList.toggle('is-on', !muted && !locked);
+        b.classList.toggle('is-locked', !muted && locked);
+      });
+      if (this.dom.audioUnlockHint) this.dom.audioUnlockHint.classList.toggle('is-unlocked', !locked || muted);
+      if (this.dom.audioGate) {
+        const show = locked && !muted;
+        this.dom.audioGate.classList.toggle('is-visible', show);
       }
-      if (this.dom.btnTitleAudio) {
-        this.dom.btnTitleAudio.textContent = txt;
-        this.dom.btnTitleAudio.classList.toggle('is-on', !m);
-      }
+    },
+
+    _openSettings() {
+      this._settingsFromPause = this.mode === 'paused';
+      if (this._settingsFromPause) this.dom.modalPause.classList.remove('is-active');
+      this._renderSettings();
+      this.dom.modalSettings.classList.add('is-active');
+    },
+
+    _closeSettings() {
+      this.dom.modalSettings.classList.remove('is-active');
+      if (this._settingsFromPause && this.mode === 'paused') this.dom.modalPause.classList.add('is-active');
+      this._settingsFromPause = false;
+    },
+
+    _renderSettings() {
+      const st = this.settings;
+      const mv = Math.round(st.musicVol * 100), sv = Math.round(st.sfxVol * 100);
+      if (Number(this.dom.setMusic.value) !== mv) this.dom.setMusic.value = String(mv);
+      if (Number(this.dom.setSfx.value) !== sv) this.dom.setSfx.value = String(sv);
+      this.dom.setMusicVal.textContent = String(mv);
+      this.dom.setSfxVal.textContent = String(sv);
+      Array.from(this.dom.setQuality.children).forEach((b) => b.classList.toggle('is-on', b.dataset.val === st.quality));
+      Array.from(this.dom.setShake.children).forEach((b) => b.classList.toggle('is-on', Number(b.dataset.val) === st.shake));
     },
 
     _togglePause(pause) {
       if (pause) {
         this.mode = 'paused';
         this.dom.modalPause.classList.add('is-active');
-        NV.Audio.setMusicMode('idle');
+        NV.Audio.setPaused(true);
       } else {
         this.dom.modalPause.classList.remove('is-active');
+        this.dom.modalSettings.classList.remove('is-active');
         this.mode = 'playing';
+        NV.Audio.setPaused(false);
         NV.Audio.setMusicMode(this.boss ? 'boss' : 'battle');
       }
     },
 
     // ==================== SCENE MANAGEMENT ====================
     _clearWorld() {
+      // Free GPU buffers of per-object geometries (shared ones in NV.Assets.geos are kept)
+      const shared = new Set(Object.values(NV.Assets.geos));
+      const seen = new Set();
+      this.worldGroup.traverse((o) => {
+        if (o.geometry && !shared.has(o.geometry) && !seen.has(o.geometry)) { seen.add(o.geometry); }
+      });
       while (this.worldGroup.children.length > 0) {
         this.worldGroup.remove(this.worldGroup.children[0]);
       }
+      seen.forEach((g) => { try { g.dispose(); } catch (_) {} });
       this.playerMesh = null;
       this.wingmanMeshes = [];
       this.bunkers = [];
@@ -6535,6 +6898,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       this.shockwaves = [];
       this.beams = [];
       this.activeRailbeam = null;
+      if (this.fxLive) { this.fxLive.forEach((f) => this.fxPool.push(f.sp)); this.fxLive.length = 0; }
       NV.Audio.stopUfoLoop();
     },
 
@@ -6548,6 +6912,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         this.camera.fov = 46;
         this.camera.updateProjectionMatrix();
       }
+      NV.Audio.setPaused(false);
       NV.Audio.setMusicMode('hangar');
       this.dom.screenTitle.classList.add('is-active');
       this.dom.hud.classList.remove('is-visible');
@@ -6610,6 +6975,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           tempWingmen: 0,
           tempWingmanTimer: 0,
           seekerCounter: 0,
+          scatterTimer: 0,
+          barrier: 0,
         },
       };
 
@@ -6644,15 +7011,19 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       const p = this.state.player;
       p.x = 0; p.vx = 0; p.dashTime = 0; p.invuln = 0; p.fireCd = 0;
       p.overclockTimer = 0;
+      p.scatterTimer = 0;
+      this._barrierSprite = null;
 
       // Load 3D environment
       NV.Env.load(stageCfg.env);
+      NV.Audio.setMusicParams({ sector: stageCfg.id, bossPhase: 1 });
 
       // Build player ship
       this.playerMesh = NV.Assets.buildPlayerShip(this.state.shipCfg.id);
       this.playerMesh.position.set(0, 0, NV.PLAYFIELD.playerZ);
       this.worldGroup.add(this.playerMesh);
       this._syncWingmen();
+      this._syncBarrier();
 
       // Build 4 Destructible 3D Energy Bunkers (revealed when combat starts)
       this._buildBunkers();
@@ -6682,6 +7053,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         }
         this.camera.position.set(0, 20.5, 31.5);
         this.camera.lookAt(0, -0.5, -2.5);
+        this._camBase = null;
         this.bunkers.forEach(b => { if (b.alive) b.mesh.visible = true; });
         if (this.playerMesh) {
           this.playerMesh.position.set(p.x, 0, NV.PLAYFIELD.playerZ);
@@ -6699,6 +7071,11 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
         const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
         if (isTouch && this.dom.touchControls) this.dom.touchControls.classList.add('is-visible');
+        // Touch pilots get auto-fire on by default (still toggleable from the HUD)
+        if (isTouch && !this._touchAutoFireSet && window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
+          this._touchAutoFireSet = true;
+          if (!this.autoFire) this._toggleAutoFire();
+        }
 
         if (this.boss) {
           this.dom.bossHud.classList.add('is-visible');
@@ -6782,17 +7159,29 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           mesh.position.set(x, 0, z);
           this.worldGroup.add(mesh);
           const hpScale = 1 + (stageCfg.id - 1) * 0.08;
+          // Elite variants appear from Sector 3: tougher, gold-trimmed, sharper fire, guaranteed drop
+          const eliteChance = stageCfg.id >= 3 && type !== 'scout' ? Math.min(0.16, 0.05 + stageCfg.id * 0.012) : 0;
+          const elite = Math.random() < eliteChance;
+          if (elite) {
+            mesh.scale.setScalar(1.15);
+            const halo = NV.Assets.makeGlowSprite(0xffd066, 3.2, 0.55);
+            mesh.add(halo);
+            mesh.userData.eliteHalo = halo;
+          }
           this.enemies.push({
             type,
             cfg,
             mesh,
+            elite,
             x, z,
             homeX: x,
             homeZ: z,
-            hp: cfg.hp * hpScale,
-            maxHp: cfg.hp * hpScale,
+            hp: cfg.hp * hpScale * (elite ? 1.8 : 1),
+            maxHp: cfg.hp * hpScale * (elite ? 1.8 : 1),
             shieldHp: cfg.shielded ? 1.5 : 0,
-            radius: cfg.radius,
+            radius: cfg.radius * (elite ? 1.1 : 1),
+            charge: 0,
+            diveWarn: 0,
             diving: false,
             diveT: 0,
             diveStartX: 0,
@@ -6859,8 +7248,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       p.dashTime = 0.25;
       p.invuln = Math.max(p.invuln, 0.34);
       p.dashCd = this.state.shipCfg.dashCd * this.state.upgrades.dashCdMult;
-      NV.Audio.playDash();
-      this._spawnExplosion(p.x, 0, NV.PLAYFIELD.playerZ, this.state.shipCfg.accent, 10, 0.45);
+      NV.Audio.playDash(p.dashDir);
+      this._spawnSparks(p.x, 0, NV.PLAYFIELD.playerZ, this.state.shipCfg.accent, 10, 10, 0.4);
     },
 
     _triggerSpecial() {
@@ -6930,8 +7319,15 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       const col = overclock ? 0xffd066 : cfg.accent;
       const pz = NV.PLAYFIELD.playerZ - 1.3;
 
-      NV.Audio.playShoot(cfg.pattern, this._panFromX(p.x));
+      const wLevel = 1 + up.extraSpread + (overclock ? 1 : 0) + (p.scatterTimer > 0 ? 1 : 0);
+      NV.Audio.playShoot(cfg.pattern, this._panFromX(p.x), wLevel);
       this.state.shotsFired++;
+      if (p.scatterTimer > 0) {
+        [-1, 1].forEach((side) => {
+          this._spawnPlayerBullet(p.x + side * 0.8, pz + 0.3, side * 11, -38, dmg * 0.6, 0xff6ad5);
+          this._spawnPlayerBullet(p.x + side * 0.9, pz + 0.4, side * 19, -34, dmg * 0.5, 0xff6ad5);
+        });
+      }
 
       if (cfg.pattern === 'twin') {
         this._spawnPlayerBullet(p.x - 0.65, pz, 0, -44, dmg, col);
@@ -6978,10 +7374,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     },
 
     _spawnPlayerBullet(x, z, vx, vz, dmg, color) {
-      const mesh = new THREE.Mesh(
-        NV.Assets.geos.bolt,
-        new THREE.MeshBasicMaterial({ color })
-      );
+      const cache = this._boltMats || (this._boltMats = {});
+      if (!cache[color]) cache[color] = new THREE.MeshBasicMaterial({ color: new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.35).multiplyScalar(1.5) });
+      const mesh = new THREE.Mesh(NV.Assets.geos.bolt, cache[color]);
       mesh.position.set(x, 0.05, z);
       mesh.rotation.y = Math.atan2(vx, vz);
       const glow = NV.Assets.makeGlowSprite(color, 1.15, 0.75);
@@ -6991,22 +7386,18 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     },
 
     _spawnEnemyBullet(x, z, vx, vz, color = 0xff3b52, radius = 0.36) {
-      const mesh = new THREE.Mesh(
-        NV.Assets.geos.sphere,
-        new THREE.MeshBasicMaterial({ color })
-      );
+      const mesh = new THREE.Mesh(NV.Assets.geos.sphere, this._bulletCoreMat(color));
       mesh.scale.setScalar(radius);
       mesh.position.set(x, 0.05, z);
-      mesh.add(NV.Assets.makeGlowSprite(color, radius * 4.5, 0.85));
+      mesh.add(NV.Assets.makeGlowSprite(color, 5.2, 0.95));
       this.worldGroup.add(mesh);
       this.enemyBullets.push({ x, z, vx, vz, radius, mesh, color });
     },
 
     _spawnMissile(x, z, vx, vz, dmg) {
-      const mesh = new THREE.Mesh(
-        new THREE.ConeGeometry(0.2, 0.9, 5),
-        new THREE.MeshBasicMaterial({ color: 0x2ee69d })
-      );
+      const G = NV.Assets.geos;
+      if (!G.missile) G.missile = new THREE.ConeGeometry(0.2, 0.9, 5);
+      const mesh = new THREE.Mesh(G.missile, this._missileMat || (this._missileMat = new THREE.MeshBasicMaterial({ color: 0x2ee69d })));
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.set(x, 0.15, z);
       mesh.add(NV.Assets.makeGlowSprite(0x2ee69d, 1.5, 0.85));
@@ -7016,23 +7407,27 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
     _spawnPowerup(x, z, forcedType = null) {
       const types = [
-        { id: 'overclock', label: 'OVERCLOCK', color: 0xf5a623 },
-        { id: 'shield',    label: 'SHIELD + BUNKER', color: 0x2ee69d },
-        { id: 'nova',      label: 'NOVA CHARGE', color: 0x38d9ff },
-        { id: 'wingman',   label: 'WINGMAN DRONE', color: 0x80f0ff },
+        { id: 'overclock', label: 'OVERCLOCK', color: 0xf5a623, w: 1.0 },
+        { id: 'shield',    label: 'HULL + BUNKER REPAIR', color: 0x2ee69d, w: 1.0 },
+        { id: 'nova',      label: 'NOVA CHARGE', color: 0x38d9ff, w: 0.9 },
+        { id: 'wingman',   label: 'WINGMAN DRONE', color: 0x80f0ff, w: 0.7 },
+        { id: 'scatter',   label: 'SCATTER SHOT', color: 0xff6ad5, w: 1.0 },
+        { id: 'barrier',   label: 'DEFLECTOR BARRIER', color: 0xa48bff, w: 0.8 },
       ];
-      const pick = forcedType
-        ? types.find(t => t.id === forcedType) || types[0]
-        : types[Math.floor(Math.random() * types.length)];
+      let pick = forcedType ? types.find(t => t.id === forcedType) : null;
+      if (!pick) {
+        // Favour repairs when hull is low
+        const lowHull = this.state && this.state.player.hull <= 1;
+        const total = types.reduce((a, t) => a + t.w * (lowHull && t.id === 'shield' ? 2.5 : 1), 0);
+        let r = Math.random() * total;
+        pick = types[0];
+        for (const t of types) { r -= t.w * (lowHull && t.id === 'shield' ? 2.5 : 1); if (r <= 0) { pick = t; break; } }
+      }
       const g = new THREE.Group();
-      const core = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.56, 0),
-        new THREE.MeshBasicMaterial({ color: pick.color })
-      );
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(0.76, 0.07, 6, 16),
-        new THREE.MeshBasicMaterial({ color: 0xffffff })
-      );
+      const G = NV.Assets.geos;
+      if (!G.puCore) { G.puCore = new THREE.OctahedronGeometry(0.56, 0); G.puRing = new THREE.TorusGeometry(0.76, 0.07, 6, 16); }
+      const core = new THREE.Mesh(G.puCore, new THREE.MeshBasicMaterial({ color: pick.color }));
+      const ring = new THREE.Mesh(G.puRing, new THREE.MeshBasicMaterial({ color: 0xffffff }));
       g.add(core, ring, NV.Assets.makeGlowSprite(pick.color, 2.2, 0.8));
       g.position.set(x, 0.2, z);
       this.worldGroup.add(g);
@@ -7040,60 +7435,153 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     },
 
     // ==================== VFX & FEEDBACK ====================
-    _spawnMuzzleFlash(x, y, z, color, scale = 1.0) {
-      if (this.particles.length >= 260) return;
-      const flash = NV.Assets.makeGlowSprite(color, 1.45 * scale, 0.95);
-      flash.position.set(x, y, z);
-      this.worldGroup.add(flash);
-      this.particles.push({
-        mesh: flash,
-        vx: 0, vy: 0, vz: -4,
-        life: 0.08,
-        maxLife: 0.08,
-        isSprite: true,
+    // Pooled additive sprites: flashes, fireballs, sparks (velocity-stretched), trails. No per-frame allocation.
+    _fx(o) {
+      const live = this.fxLive || (this.fxLive = []);
+      const pool = this.fxPool || (this.fxPool = []);
+      const cap = this.maxParticles || 400;
+      if (live.length >= cap && !o.force) return null;
+      let sp = pool.pop();
+      if (!sp) {
+        sp = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: NV.Assets.textures.glow, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
+      }
+      const m = sp.material;
+      m.color.setHex(o.color != null ? o.color : 0xffffff);
+      if (o.white) m.color.lerp(this._tmpColor || (this._tmpColor = new THREE.Color(1, 1, 1)), o.white);
+      if (o.boost) m.color.multiplyScalar(o.boost);
+      m.opacity = o.opacity != null ? o.opacity : 1;
+      m.rotation = 0;
+      sp.position.set(o.x, o.y || 0, o.z);
+      sp.scale.set(o.size, o.size, 1);
+      sp.visible = true;
+      this.worldGroup.add(sp);
+      live.push({
+        sp, life: o.life, maxLife: o.life,
+        vx: o.vx || 0, vy: o.vy || 0, vz: o.vz || 0,
+        drag: o.drag || 0, grav: o.grav || 0,
+        s0: o.size, s1: o.size1 != null ? o.size1 : o.size,
+        a0: m.opacity, stretch: o.stretch || 0,
       });
+      return sp;
+    },
+
+    _updateFx(dt) {
+      const live = this.fxLive;
+      if (!live || live.length === 0) return;
+      const pool = this.fxPool;
+      for (let i = live.length - 1; i >= 0; i--) {
+        const f = live[i];
+        f.life -= dt;
+        if (f.life <= 0) {
+          this.worldGroup.remove(f.sp);
+          pool.push(f.sp);
+          live[i] = live[live.length - 1];
+          live.pop();
+          continue;
+        }
+        if (f.drag) {
+          const k = Math.max(0, 1 - f.drag * dt);
+          f.vx *= k; f.vy *= k; f.vz *= k;
+        }
+        f.vy -= f.grav * dt;
+        const sp = f.sp;
+        sp.position.x += f.vx * dt;
+        sp.position.y += f.vy * dt;
+        sp.position.z += f.vz * dt;
+        const u = 1 - f.life / f.maxLife; // 0 -> 1
+        const sz = f.s0 + (f.s1 - f.s0) * u;
+        if (f.stretch) {
+          // Streak along screen-space velocity (camera looks down the -z lane from above/behind)
+          const sx = f.vx, sy = -f.vz * 0.55 + f.vy * 0.8;
+          const sp2 = Math.hypot(sx, sy);
+          sp.material.rotation = Math.atan2(sy, sx);
+          sp.scale.set(sz * (1 + Math.min(4, sp2 * f.stretch)), sz * 0.5, 1);
+        } else {
+          sp.scale.set(sz, sz, 1);
+        }
+        sp.material.opacity = f.a0 * (1 - u * u);
+      }
+    },
+
+    _clearFx() {
+      if (!this.fxLive) return;
+      for (const f of this.fxLive) { this.worldGroup.remove(f.sp); this.fxPool.push(f.sp); }
+      this.fxLive.length = 0;
+    },
+
+    _spawnMuzzleFlash(x, y, z, color, scale = 1.0) {
+      this._fx({ x, y, z, color, white: 0.35, size: 1.9 * scale, size1: 0.6 * scale, life: 0.07, vz: -6 });
+      if (Math.random() < 0.5) {
+        this._fx({ x, y, z: z - 0.2, color, white: 0.5, size: 0.35 * scale, life: 0.12, vx: (Math.random() - 0.5) * 6, vz: -18, stretch: 0.06 });
+      }
     },
 
     _spawnThrusterTrail(x, y, z, color, vx = 0) {
-      if (this.particles.length >= 260) return;
-      const s = NV.Assets.makeGlowSprite(color, 0.95, 0.85);
-      s.position.set(x + (Math.random() - 0.5) * 0.35, y, z + 1.4);
-      this.worldGroup.add(s);
-      this.particles.push({
-        mesh: s,
-        vx: vx * 0.25 + (Math.random() - 0.5) * 2,
-        vy: (Math.random() - 0.5) * 1.5,
-        vz: 8 + Math.random() * 4,
-        life: 0.22,
-        maxLife: 0.22,
-        isSprite: true,
+      this._fx({
+        x: x + (Math.random() - 0.5) * 0.35, y, z: z + 1.4, color, size: 1.0, size1: 0.2, life: 0.26, opacity: 0.85,
+        vx: vx * 0.25 + (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 1.5, vz: 8 + Math.random() * 4,
       });
     },
 
-    _spawnExplosion(x, y, z, color, count = 16, scale = 1) {
-      const maxParticles = 240;
-      const n = Math.min(count, Math.max(4, maxParticles - this.particles.length));
-      const mat = new THREE.MeshBasicMaterial({ color });
+    _spawnSparks(x, y, z, color, n = 6, speed = 12, size = 0.32) {
       for (let i = 0; i < n; i++) {
-        const m = new THREE.Mesh(i % 2 ? NV.Assets.geos.oct : NV.Assets.geos.box, mat);
-        const s = (0.14 + Math.random() * 0.24) * scale;
+        const ang = Math.random() * Math.PI * 2;
+        const spd = speed * (0.4 + Math.random() * 0.8);
+        this._fx({
+          x, y, z, color, white: 0.45, size: size * (0.7 + Math.random() * 0.6), size1: size * 0.2,
+          life: 0.22 + Math.random() * 0.3, vx: Math.cos(ang) * spd, vy: (Math.random() - 0.3) * spd * 0.5,
+          vz: Math.sin(ang) * spd, drag: 3.2, stretch: 0.045,
+        });
+      }
+    },
+
+    _spawnExplosion(x, y, z, color, count = 16, scale = 1) {
+      const big = scale >= 0.85;
+      // 1. white-hot flash
+      this._fx({ x, y: y + 0.2, z, color, white: 0.7, size: (big ? 6.8 : 2.6) * scale, size1: (big ? 3.0 : 1.2) * scale, life: big ? 0.16 : 0.09, boost: 1.5, force: true });
+      if (scale < 0.5) {
+        this._spawnSparks(x, y, z, color, Math.min(6, count), 9 * Math.max(0.6, scale * 2), 0.28);
+        return;
+      }
+      // 2. fireball puffs
+      const puffs = Math.round(4 + scale * 4);
+      for (let i = 0; i < puffs; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = (1.2 + Math.random() * 3.2) * scale;
+        const hot = Math.random() < 0.5;
+        this._fx({
+          x: x + Math.cos(ang) * 0.3 * scale, y: y + Math.random() * 0.4, z: z + Math.sin(ang) * 0.3 * scale,
+          color: hot ? 0xffb347 : color, white: hot ? 0.15 : 0.05,
+          size: (1.5 + Math.random() * 1.1) * scale, size1: (3.0 + Math.random() * 1.6) * scale,
+          life: 0.35 + Math.random() * 0.35, opacity: 0.75,
+          vx: Math.cos(ang) * spd, vy: Math.random() * 1.5, vz: Math.sin(ang) * spd, drag: 2.5,
+        });
+      }
+      // 3. streaking sparks
+      this._spawnSparks(x, y, z, color, Math.round(count * 0.7), 15 * Math.sqrt(scale), 0.38 * Math.sqrt(scale));
+      this._spawnSparks(x, y, z, 0xffe0a0, Math.round(count * 0.3), 20 * Math.sqrt(scale), 0.3);
+      // 4. tumbling debris chunks
+      const n = Math.min(Math.round(count * 0.55), Math.max(2, (this.maxParticles || 400) * 0.3 - this.particles.length));
+      const debrisMat = this._debrisMat(color);
+      for (let i = 0; i < n; i++) {
+        const m = new THREE.Mesh(i % 2 ? NV.Assets.geos.oct : NV.Assets.geos.box, debrisMat);
+        const s = (0.12 + Math.random() * 0.22) * scale;
         m.scale.setScalar(s);
         m.position.set(x, y, z);
         const ang = Math.random() * Math.PI * 2;
-        const elev = (Math.random() - 0.4) * 9 * scale;
-        const spd = (3.5 + Math.random() * 11) * scale;
+        const spd = (3.5 + Math.random() * 10) * scale;
         this.worldGroup.add(m);
         this.particles.push({
-          mesh: m,
-          vx: Math.cos(ang) * spd,
-          vy: elev,
-          vz: Math.sin(ang) * spd,
-          life: 0.32 + Math.random() * 0.36,
-          maxLife: 0.68,
+          mesh: m, vx: Math.cos(ang) * spd, vy: (Math.random() - 0.35) * 8 * scale, vz: Math.sin(ang) * spd,
+          life: 0.4 + Math.random() * 0.45, maxLife: 0.85,
         });
+        // ember trail on some debris
+        if (i % 3 === 0) this._fx({ x, y, z, color: 0xffa040, size: 0.5 * scale, size1: 0.1, life: 0.45, vx: Math.cos(ang) * spd * 0.9, vy: 1, vz: Math.sin(ang) * spd * 0.9, drag: 1.5 });
       }
-      // Expanding ring burst
-      if (scale >= 0.85) {
+      // 5. shockwave rings
+      if (big) {
         const ring = new THREE.Mesh(
           NV.Assets.geos.ring,
           new THREE.MeshBasicMaterial({
@@ -7103,12 +7591,43 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         );
         ring.position.set(x, y + 0.1, z);
         this.worldGroup.add(ring);
-        this.shockwaves.push({ mesh: ring, r: 0.5, maxR: 3.4 * scale, speed: 12 * scale, lethal: false });
+        this.shockwaves.push({ mesh: ring, r: 0.5, maxR: 3.6 * scale, speed: 13 * scale, lethal: false });
+        if (scale >= 1.4) {
+          const ring2 = new THREE.Mesh(
+            NV.Assets.geos.ring,
+            new THREE.MeshBasicMaterial({
+              color: 0xffffff, transparent: true, opacity: 0.6, side: THREE.DoubleSide,
+              blending: THREE.AdditiveBlending, depthWrite: false,
+            })
+          );
+          ring2.position.set(x, y + 0.15, z);
+          this.worldGroup.add(ring2);
+          this.shockwaves.push({ mesh: ring2, r: 0.3, maxR: 6.5 * scale, speed: 24 * scale, lethal: false });
+        }
       }
       // Dynamic flash light
       this.fxLight.color.setHex(color);
       this.fxLight.position.set(x, y + 2, z);
-      this.fxLight.intensity = Math.min(10, 4.5 * scale);
+      this.fxLight.intensity = Math.min(14, 6 * scale);
+      if (this.post) this.post.aberr = Math.min(0.006, this.post.aberr + 0.0012 * scale);
+    },
+
+    _bulletCoreMat(color) {
+      const cache = this._coreMats || (this._coreMats = {});
+      if (!cache[color]) {
+        const c = new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.55).multiplyScalar(1.6);
+        cache[color] = new THREE.MeshBasicMaterial({ color: c });
+      }
+      return cache[color];
+    },
+
+    _debrisMat(color) {
+      const cache = this._debrisMats || (this._debrisMats = {});
+      if (!cache[color]) {
+        const c = new THREE.Color(color).lerp(new THREE.Color(0xffd9a0), 0.35);
+        cache[color] = new THREE.MeshBasicMaterial({ color: c });
+      }
+      return cache[color];
     },
 
     _spawnFloatText(worldX, worldZ, text, colorHex = '#ffd066') {
@@ -7160,19 +7679,55 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       if (wx !== undefined) {
         this._spawnFloatText(wx, wz, labelOverride || `+${total}`, mult >= 2 ? '#f5a623' : '#7ae8ff');
       }
+      // Combo milestone rewards
+      const c = this.state.combo;
+      if (c > 0 && c % 10 === 0 && !labelOverride) {
+        NV.Audio.playCombo(c);
+        this.state.player.special = Math.min(100, this.state.player.special + 12 * this.state.upgrades.specialChargeMult);
+        this._showToast(`COMBO ${c}! SCORE x${mult.toFixed(1)} · NOVA +12%`);
+        if (c % 25 === 0 || c === 20 || c === 40) {
+          if (wx !== undefined) this._spawnPowerup(clamp(wx, -13, 13), wz);
+        }
+      }
       // Charge Special Energy
       const charge = (pts >= 1000 ? 18 : 6.5) * this.state.upgrades.specialChargeMult;
       this.state.player.special = Math.min(100, this.state.player.special + charge);
     },
 
+    _syncBarrier() {
+      const p = this.state.player;
+      if (p.barrier > 0 && !this._barrierSprite && this.playerMesh) {
+        const sp = NV.Assets.makeGlowSprite(0xa48bff, 4.6, 0.55);
+        this.playerMesh.add(sp);
+        this._barrierSprite = sp;
+      } else if (p.barrier <= 0 && this._barrierSprite) {
+        if (this._barrierSprite.parent) this._barrierSprite.parent.remove(this._barrierSprite);
+        this._barrierSprite = null;
+      }
+    },
+
     _damagePlayer(amount = 1) {
       const p = this.state.player;
       if (p.invuln > 0 || this.mode !== 'playing') return;
+      if (p.barrier > 0) {
+        // Deflector barrier absorbs the hit
+        p.barrier = 0;
+        p.invuln = 0.9;
+        this._syncBarrier();
+        NV.Audio.playBarrierHit();
+        this.shake = Math.max(this.shake, 0.4);
+        this._spawnSparks(p.x, 0.3, NV.PLAYFIELD.playerZ, 0xa48bff, 16, 14, 0.5);
+        this._fx({ x: p.x, y: 0.3, z: NV.PLAYFIELD.playerZ, color: 0xa48bff, white: 0.3, size: 7, size1: 2, life: 0.3, force: true });
+        this._showToast('BARRIER ABSORBED HIT');
+        return;
+      }
       p.hull -= amount;
       p.invuln = 1.45;
       this.state.combo = 0;
       this.state.stageDamageTaken++;
       this.shake = Math.max(this.shake, 0.85);
+      this.damageFx = 1;
+      this.hitStopTimer = Math.max(this.hitStopTimer, 0.07);
       this._screenFlash('rgba(255, 42, 68, 0.36)');
       NV.Audio.playPlayerHit();
       this._spawnExplosion(p.x, 0, NV.PLAYFIELD.playerZ, 0xff3b52, 20, 1.1);
@@ -7202,19 +7757,21 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       if (e.hp <= 0) {
         this.worldGroup.remove(e.mesh);
         this.state.kills++;
-        NV.Audio.playExplosion(e.type === 'carrier' ? 1.5 : 0.95, pan);
-        this._spawnExplosion(e.x, 0, e.z, e.cfg.color, 18, e.type === 'carrier' ? 1.35 : 0.95);
-        this.shake = Math.max(this.shake, 0.25);
-        this._addScore(e.cfg.score, e.x, e.z);
+        const heavy = e.type === 'carrier' || e.elite;
+        NV.Audio.playExplosion(heavy ? 1.6 : 0.95, pan);
+        this._spawnExplosion(e.x, 0, e.z, e.elite ? 0xffd066 : e.cfg.color, heavy ? 26 : 18, heavy ? 1.4 : 0.95);
+        this.shake = Math.max(this.shake, heavy ? 0.5 : 0.25);
+        if (heavy) this.hitStopTimer = Math.max(this.hitStopTimer, 0.05);
+        this._addScore(e.cfg.score * (e.elite ? 2 : 1), e.x, e.z, e.elite ? `ELITE +${e.cfg.score * 2}` : null);
 
-        // Chance to drop in-stage power-up
-        if (Math.random() < (e.type === 'carrier' ? 0.55 : 0.115)) {
+        // Chance to drop in-stage power-up (elites always drop)
+        if (e.elite || Math.random() < (e.type === 'carrier' ? 0.55 : 0.115)) {
           this._spawnPowerup(e.x, e.z);
         }
         return true;
       }
       NV.Audio.playHit(false, pan);
-      this._spawnExplosion(e.x, 0.1, e.z + 0.4, 0xffd066, 4, 0.35);
+      this._spawnSparks(e.x, 0.1, e.z + 0.5, 0xffd066, 4, 9, 0.3);
       return false;
     },
 
@@ -7296,25 +7853,48 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
       NV.Env.update(dt);
 
-      // Update Audio unlock badge status
-      if (this.dom.audioUnlockHint && NV.Audio.ctx && NV.Audio.ctx.state === 'running') {
-        this.dom.audioUnlockHint.classList.add('is-unlocked');
+      // Re-check audio indicators a few times per second (state can change without events, e.g. Safari interruptions)
+      this._audioUiTimer = (this._audioUiTimer || 0) - rawDt;
+      if (this._audioUiTimer <= 0) {
+        this._audioUiTimer = 0.4;
+        this._syncAudioUi();
       }
 
       // Tick dynamic music across ALL modes (title hangar, cinema, playing, upgrade)
+      // Adaptive score: layers build with formation progress, incoming fire, combo and low hull
       let musicIntensity = 0;
+      let musicOpts = null;
       if (this.mode === 'playing' && this.state) {
-        musicIntensity = this.boss
-          ? (1 - this.boss.hp / this.boss.maxHp)
-          : (1 - this.enemies.length / Math.max(1, this.formBaseCount));
+        const pl = this.state.player;
+        const danger = clamp(this.enemyBullets.length / 16, 0, 1);
+        const lowHp = pl.hull <= 1 ? 1 : (pl.hull <= 2 ? 0.5 : 0);
+        const combo = clamp(this.state.combo / 30, 0, 1);
+        if (this.boss) {
+          const r = 1 - this.boss.hp / this.boss.maxHp;
+          musicIntensity = 0.3 + r * 0.45 + danger * 0.15 + lowHp * 0.1;
+          musicOpts = { bossPhase: this.boss.phase };
+        } else {
+          const prog = 1 - this.enemies.length / Math.max(1, this.formBaseCount);
+          musicIntensity = prog * 0.45 + danger * 0.25 + combo * 0.25 + lowHp * 0.2 + (this.state.stageIndex / 9) * 0.15;
+        }
+        // Low-hull alarm
+        if (pl.hull === 1 && this.bossDyingTimer <= 0) {
+          this._lowHpBeep = (this._lowHpBeep || 0) - dt;
+          if (this._lowHpBeep <= 0) { this._lowHpBeep = 1.6; NV.Audio.playLowHealth(); }
+        }
       } else if (this.mode === 'cinema') {
         musicIntensity = 0.5;
       }
-      NV.Audio.updateMusic(rawDt, clamp(musicIntensity, 0, 1));
+      NV.Audio.updateMusic(rawDt, clamp(musicIntensity, 0, 1), musicOpts);
+
+      if (this.post && this.post.aberr > 0) this.post.aberr = Math.max(0, this.post.aberr - rawDt * 0.02);
+      this._updateDamageVignette(rawDt);
 
       if (this.mode === 'title') {
         this._updateTitleCamera(dt);
+        this._updateFx(dt);
       } else if (this.mode === 'cinema') {
+        this._updateFx(dt);
         NV.Cinema.update(dt, this.camera, this.playerMesh, this.boss ? this.boss.mesh : null);
         this._animatePlayerThrusters(dt);
         if (this.boss) this._animateBossMesh(dt);
@@ -7342,7 +7922,18 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         this.fxLight.intensity = Math.max(0, this.fxLight.intensity - rawDt * 22);
       }
 
-      this.renderer.render(this.scene, this.camera);
+      this._trackPerf(rawDt);
+      this._render();
+    },
+
+    _updateDamageVignette(rawDt) {
+      const el = this.dom.fxDamage;
+      if (!el) return;
+      this.damageFx = Math.max(0, (this.damageFx || 0) - rawDt * 1.6);
+      const low = this.mode === 'playing' && this.state && this.state.player.hull === 1;
+      if (low !== this._lowVig) { this._lowVig = low; el.classList.toggle('is-low', low); }
+      const op = low ? '' : (this.damageFx > 0.01 ? this.damageFx.toFixed(2) : '0');
+      if (op !== this._vigOp) { this._vigOp = op; el.style.opacity = op; }
     },
 
     _updateTitleCamera(dt) {
@@ -7383,6 +7974,8 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
       // Overclock & temp wingmen timers
       if (p.overclockTimer > 0) p.overclockTimer = Math.max(0, p.overclockTimer - dt);
+      if (p.scatterTimer > 0) p.scatterTimer = Math.max(0, p.scatterTimer - dt);
+      if (this._barrierSprite) this._barrierSprite.material.opacity = 0.4 + Math.sin(this.elapsed * 6) * 0.15;
       if (p.tempWingmanTimer > 0) {
         p.tempWingmanTimer -= dt;
         if (p.tempWingmanTimer <= 0) {
@@ -7426,6 +8019,16 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         shieldMesh.rotation.z += dt * 4.5;
       }
       this._animatePlayerThrusters(dt);
+
+      // Continuous engine exhaust trail
+      this._trailT = (this._trailT || 0) - dt;
+      if (this._trailT <= 0) {
+        this._trailT = this.effectiveQuality === 'low' ? 0.06 : 0.03;
+        const acc = p.overclockTimer > 0 ? 0xffd066 : this.state.shipCfg.accent;
+        for (const off of [-0.38, 0.38]) {
+          this._fx({ x: p.x + off, y: 0.02, z: NV.PLAYFIELD.playerZ + 1.5, color: acc, size: 0.75, size1: 0.12, life: 0.32, opacity: 0.55, vz: 10, vx: -p.vx * 0.12 });
+        }
+      }
 
       // Position Wingman Drones orbiting flanks
       this.wingmanMeshes.forEach((wm, idx) => {
@@ -7500,20 +8103,28 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         this.camera.fov = lerp(this.camera.fov, 46, Math.min(1, dt * 8));
         this.camera.updateProjectionMatrix();
       }
+      // Trauma-style shake: smooth multi-frequency noise, squared falloff, user-scalable (Settings)
       const targetCamX = p.x * 0.22;
-      const sx = (Math.random() - 0.5) * this.shake * 1.4;
-      const sy = (Math.random() - 0.5) * this.shake * 1.4;
-      this.shake = Math.max(0, this.shake - dt * 2.8);
-      this.camera.position.x = lerp(this.camera.position.x, targetCamX, Math.min(1, dt * 6)) + sx;
-      this.camera.position.y = lerp(this.camera.position.y, 20.5, Math.min(1, dt * 6)) + sy;
-      this.camera.position.z = lerp(this.camera.position.z, 31.5, Math.min(1, dt * 6));
+      const trauma = Math.min(1.2, this.shake) * (this.settings.shake != null ? this.settings.shake : 1);
+      const tr = trauma * trauma;
+      const tt = this.elapsed * 34;
+      const sx = (Math.sin(tt * 1.13) + Math.sin(tt * 2.71 + 1.3) * 0.5) * tr * 0.85;
+      const sy = (Math.sin(tt * 1.37 + 2.1) + Math.sin(tt * 3.17 + 0.4) * 0.5) * tr * 0.85;
+      this.shake = Math.max(0, this.shake - dt * 2.4);
+      this._camBase = this._camBase || new THREE.Vector3(0, 20.5, 31.5);
+      const cb = this._camBase;
+      cb.x = lerp(cb.x, targetCamX, Math.min(1, dt * 6));
+      cb.y = lerp(cb.y, 20.5, Math.min(1, dt * 6));
+      cb.z = lerp(cb.z, 31.5, Math.min(1, dt * 6));
+      this.camera.position.set(cb.x + sx, cb.y + sy, cb.z);
       this.camera.lookAt(targetCamX * 0.35, -0.5, -2.5);
+      if (tr > 0.001) this.camera.rotateZ(Math.sin(tt * 0.83 + 0.7) * tr * 0.03);
 
       // Check Stage Clear
       if (!this.boss && this.enemies.length === 0 && this.stageClearDelay <= 0) {
         this.stageClearDelay = 1.25;
         this._showAlert('SECTOR SECURED', 'PREPARING HYPERSPACE JUMP', 1.2);
-        NV.Audio.playPowerup();
+        NV.Audio.playWaveClear();
       }
       if (this.stageClearDelay > 0) {
         this.stageClearDelay -= dt;
@@ -7589,11 +8200,43 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
           e.mesh.userData.shieldVisual.rotation.z += dt * 2.2;
         }
 
-        // Hit flash
+        // Hit flash (white) / dive warning (pulsing red)
         if (e.flash > 0) {
           e.flash -= dt;
           e.mesh.userData.armorMat.emissive.setHex(e.flash > 0 ? 0xffffff : 0x000000);
           e.mesh.userData.armorMat.emissiveIntensity = e.flash > 0 ? 0.9 : 0;
+        } else if (e.diveWarn > 0) {
+          const on = Math.sin(this.elapsed * 40) > 0;
+          e.mesh.userData.armorMat.emissive.setHex(on ? 0xff2040 : 0x000000);
+          e.mesh.userData.armorMat.emissiveIntensity = on ? 1.0 : 0;
+        }
+
+        // Dive telegraph -> launch
+        if (e.diveWarn > 0) {
+          e.diveWarn -= dt;
+          if (e.diveWarn <= 0) {
+            e.mesh.userData.armorMat.emissive.setHex(0x000000);
+            e.diving = true;
+            e.diveT = 0;
+            e.diveStartX = e.x;
+            e.diveStartZ = e.z;
+            e.diveTargetX = this.state.player.x;
+          }
+        }
+
+        // Telegraphed shot: muzzle charge glow grows, then the volley fires
+        if (e.charge > 0) {
+          e.charge -= dt;
+          const u = clamp(1 - e.charge / e.chargeMax, 0, 1);
+          if (e.chargeSprite) {
+            e.chargeSprite.scale.setScalar(0.4 + u * 2.4);
+            e.chargeSprite.material.opacity = 0.35 + u * 0.65;
+          }
+          if (e.charge <= 0) {
+            if (e.chargeSprite && e.chargeSprite.parent) e.chargeSprite.parent.remove(e.chargeSprite);
+            e.chargeSprite = null;
+            this._fireFromEnemy(e);
+          }
         }
 
         // Command Carrier periodic Scout summon
@@ -7635,14 +8278,16 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       this.diveTimer -= dt;
       if (this.diveTimer <= 0) {
         this.diveTimer = stageCfg.diveInterval * (0.75 + Math.random() * 0.45);
-        const divers = this.enemies.filter(e => e.cfg.canDive && !e.diving);
+        const divers = this.enemies.filter(e => (e.cfg.canDive || (stageCfg.id >= 4 && e.type === 'scout')) && !e.diving && !(e.diveWarn > 0));
         if (divers.length > 0) {
-          const d = divers[Math.floor(Math.random() * divers.length)];
-          d.diving = true;
-          d.diveT = 0;
-          d.diveStartX = d.x;
-          d.diveStartZ = d.z;
-          d.diveTargetX = this.state.player.x;
+          // Later sectors send divers in pairs; every dive is telegraphed by a red pulse + falling whistle
+          const n = stageCfg.id >= 6 ? 2 : 1;
+          for (let k = 0; k < n && divers.length > 0; k++) {
+            const idx = Math.floor(Math.random() * divers.length);
+            const d = divers.splice(idx, 1)[0];
+            d.diveWarn = 0.55;
+            NV.Audio.playDiveWarn(this._panFromX(d.x));
+          }
         }
       }
 
@@ -7651,14 +8296,23 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       if (this.enemyFireTimer <= 0 && this.enemies.length > 0) {
         this.enemyFireTimer = Math.max(0.32, stageCfg.fireInterval * (0.65 + ratio * 0.45));
         const shooter = this.enemies[Math.floor(Math.random() * this.enemies.length)];
-        this._fireFromEnemy(shooter);
+        if (!(shooter.charge > 0) && !shooter.diving) {
+          const heavy = ['double', 'spread3', 'burst'].includes(shooter.cfg.fireStyle) || shooter.elite;
+          shooter.chargeMax = shooter.charge = heavy ? 0.5 : 0.36;
+          const sp = NV.Assets.makeGlowSprite(shooter.elite ? 0xffd066 : shooter.cfg.color, 0.5, 0.4);
+          sp.position.set(0, 0.1, 0.9);
+          shooter.mesh.add(sp);
+          shooter.chargeSprite = sp;
+          if (heavy) NV.Audio.playEnemyCharge(this._panFromX(shooter.x), true);
+        }
       }
     },
 
     _fireFromEnemy(e) {
       const px = this.state.player.x;
       const pz = NV.PLAYFIELD.playerZ;
-      const style = e.cfg.fireStyle;
+      let style = e.cfg.fireStyle;
+      if (e.elite) style = style === 'single' ? 'aimed' : (style === 'aimed' ? 'burst' : style);
       const spd = 13.5 + this.state.stageIndex * 0.75;
       const pan = this._panFromX(e.x);
 
@@ -7705,6 +8359,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       } else {
         this.ufo.x += this.ufo.vx * dt;
         this.ufo.mesh.position.x = this.ufo.x;
+        NV.Audio.setUfoPan(this._panFromX(this.ufo.x));
         this.ufo.mesh.rotation.y += dt * 3.5;
         if (Math.abs(this.ufo.x) > 26) {
           this.worldGroup.remove(this.ufo.mesh);
@@ -7723,6 +8378,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       NV.Audio.playExplosion(1.65, this._panFromX(x));
       this._spawnExplosion(x, 0.4, z, 0xf5a623, 28, 1.5);
       this.shake = Math.max(this.shake, 0.5);
+      this.hitStopTimer = Math.max(this.hitStopTimer, 0.06);
       const bonus = 1500;
       this._addScore(bonus, x, z, `UFO +${bonus}`);
       this._spawnPowerup(clamp(x, -12, 12), z + 3);
@@ -8201,8 +8857,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
         pu.mesh.rotation.y += dt * 3.0;
 
         if (dist2D(pu.x, pu.z, p.x, NV.PLAYFIELD.playerZ) < 1.85) {
-          NV.Audio.playPowerup();
-          this._spawnExplosion(pu.x, 0.2, pu.z, pu.color, 14, 0.7);
+          NV.Audio.playPowerup(pu.type);
+          this._spawnSparks(pu.x, 0.2, pu.z, pu.color, 14, 10, 0.45);
+          this._fx({ x: pu.x, y: 0.3, z: pu.z, color: pu.color, white: 0.4, size: 4.5, size1: 1, life: 0.25, force: true });
           this._showToast(pu.label + ' ACQUIRED');
           this._spawnFloatText(pu.x, pu.z, pu.label, '#2ee69d');
 
@@ -8217,6 +8874,11 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
             p.tempWingmen = Math.min(2, p.tempWingmen + 1);
             p.tempWingmanTimer = 18.0;
             this._syncWingmen();
+          } else if (pu.type === 'scatter') {
+            p.scatterTimer = 9.0;
+          } else if (pu.type === 'barrier') {
+            p.barrier = 1;
+            this._syncBarrier();
           }
           this.worldGroup.remove(pu.mesh);
           this.powerups.splice(i, 1);
@@ -8228,6 +8890,7 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
     },
 
     _updateParticlesAndRings(dt) {
+      this._updateFx(dt);
       for (let i = this.particles.length - 1; i >= 0; i--) {
         const pt = this.particles[i];
         pt.life -= dt;
@@ -8358,8 +9021,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
     _triggerGameOver() {
       this.mode = 'gameover';
-      NV.Audio.setMusicMode('idle');
+      NV.Audio.setMusicMode('gameover');
       NV.Audio.stopUfoLoop();
+      NV.Audio.playGameOver();
       this._writeSave();
       this.dom.hud.classList.remove('is-visible');
       this.dom.bossHud.classList.remove('is-visible');
@@ -8407,7 +9071,9 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
       this.dom.hudScore.textContent = this.state.score.toLocaleString();
 
       if (this.state.combo >= 3) {
-        this.dom.hudCombo.textContent = `${this.state.combo}x COMBO`;
+        const m = 1 + Math.min(4, Math.floor(this.state.combo / 5) * 0.5);
+        const ct = `${this.state.combo}x COMBO` + (m > 1 ? ` · SCORE x${m.toFixed(1)}` : '');
+        if (this.dom.hudCombo.textContent !== ct) this.dom.hudCombo.textContent = ct;
         this.dom.hudCombo.classList.add('is-active');
       } else {
         this.dom.hudCombo.classList.remove('is-active');
@@ -8418,9 +9084,13 @@ function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"f
 
       // Hull pips
       this.dom.hudShipName.textContent = `${this.state.shipCfg.code} ${this.state.shipCfg.name}`;
-      this.dom.hudWeaponTier.textContent = p.overclockTimer > 0
-        ? `OVERCLOCK ${p.overclockTimer.toFixed(1)}s`
-        : (this.wingmanMeshes.length ? `WINGMEN x${this.wingmanMeshes.length}` : 'WEAPONS NOMINAL');
+      const tags = [];
+      if (p.overclockTimer > 0) tags.push(`OVERCLOCK ${p.overclockTimer.toFixed(1)}s`);
+      if (p.scatterTimer > 0) tags.push(`SCATTER ${p.scatterTimer.toFixed(1)}s`);
+      if (p.barrier > 0) tags.push('BARRIER');
+      if (!tags.length && this.wingmanMeshes.length) tags.push(`WINGMEN x${this.wingmanMeshes.length}`);
+      const tierTxt = tags.length ? tags.join(' · ') : 'WEAPONS NOMINAL';
+      if (this.dom.hudWeaponTier.textContent !== tierTxt) this.dom.hudWeaponTier.textContent = tierTxt;
 
       if (this.dom.hudHullPips.children.length !== p.maxHull) {
         this.dom.hudHullPips.innerHTML = '';
